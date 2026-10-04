@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Secrets — never commit these (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Local data created by the app
+uploads/
+.data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test / coverage output
+coverage/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,66 @@
+import path from 'node:path';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import mongoose from 'mongoose';
+import { env, googleConfigured, groqConfigured } from './config/env.js';
+import { errorHandler, notFoundHandler } from './middleware/error.js';
+import { authRouter } from './modules/auth/routes.js';
+import { businessRouter } from './modules/business/routes.js';
+import { servicesRouter } from './modules/services/routes.js';
+import { customersRouter } from './modules/customers/routes.js';
+import { photosRouter } from './modules/photos/routes.js';
+import { googleRouter } from './modules/google/routes.js';
+import { reviewsRouter } from './modules/reviews/routes.js';
+import { requestsRouter } from './modules/requests/routes.js';
+import { aiRouter } from './modules/ai/routes.js';
+import { analyticsRouter } from './modules/analytics/routes.js';
+import { publicRouter } from './modules/public/routes.js';
+
+export function createApp() {
+  const app = express();
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
+
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+  app.use(
+    cors({
+      origin(origin, cb) {
+        if (!origin || env.corsOrigins.includes(origin) || !env.isProd) return cb(null, true);
+        cb(new Error(`Origin ${origin} is not allowed`));
+      },
+      credentials: true,
+    })
+  );
+  app.use(express.json({ limit: '2mb' }));
+  if (process.env.NODE_ENV !== 'test') app.use(morgan(env.isProd ? 'combined' : 'dev'));
+
+  app.use('/uploads', express.static(path.resolve(env.uploadDir), { maxAge: '7d', fallthrough: false }));
+
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      ok: true,
+      db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      ai: groqConfigured() ? 'groq' : 'fallback',
+      google: googleConfigured() ? 'configured' : 'not_configured',
+      time: new Date().toISOString(),
+    });
+  });
+
+  app.use('/api/auth', authRouter);
+  app.use('/api/business', businessRouter);
+  app.use('/api/services', servicesRouter);
+  app.use('/api/customers', customersRouter);
+  app.use('/api/photos', photosRouter);
+  app.use('/api/google', googleRouter);
+  app.use('/api/reviews', reviewsRouter);
+  app.use('/api/requests', requestsRouter);
+  app.use('/api/ai', aiRouter);
+  app.use('/api/analytics', analyticsRouter);
+  app.use('/api/public', publicRouter);
+
+  app.use(notFoundHandler);
+  app.use(errorHandler);
+  return app;
+}
