@@ -20,7 +20,9 @@ import { publicRouter } from './modules/public/routes.js';
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', 1);
+  // Number of proxies in front of the API, so rate limits see the real visitor IP.
+  // 1 = nginx only. 2 = Vercel rewrites + nginx (the AWS + Vercel setup).
+  app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
   app.disable('x-powered-by');
 
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
