@@ -15,17 +15,33 @@ function required(name, devFallback) {
 // A stable dev secret so tokens survive restarts locally. In production you must set your own.
 const DEV_SECRET = 'starling-dev-secret-change-me-in-production-0123456789';
 
+const urlList = (value) =>
+  String(value || '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+
+/**
+ * FRONTEND_URL is the one setting that connects the API to the website.
+ *   FRONTEND_URL=https://starling.vercel.app
+ * Several are allowed (comma separated); the first is the public address used in
+ * review links, QR codes and Google sign-in. A wildcard like https://*.vercel.app
+ * also allows Vercel preview deployments. APP_URL is accepted as an older alias.
+ */
+const frontendUrls = urlList(process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:3000');
+const devOrigins = isProd ? [] : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+const publicFrontend = frontendUrls.find((u) => !u.includes('*')) || 'http://localhost:3000';
+
 export const env = {
   isProd,
   port: Number(process.env.PORT || 4000),
-  appUrl: (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, ''),
+  frontendUrls,
+  appUrl: publicFrontend,
   apiUrl: (process.env.API_URL || `http://localhost:${process.env.PORT || 4000}`).replace(/\/$/, ''),
   // Public base URL Google can reach to fetch photos (must be https + publicly reachable)
-  publicAssetUrl: (process.env.PUBLIC_ASSET_URL || process.env.APP_URL || '').replace(/\/$/, ''),
-  corsOrigins: (process.env.CORS_ORIGINS || process.env.APP_URL || 'http://localhost:3000')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean),
+  publicAssetUrl: (process.env.PUBLIC_ASSET_URL || publicFrontend).replace(/\/$/, ''),
+  // Websites allowed to call the API from the browser
+  corsOrigins: [...new Set([...frontendUrls, ...urlList(process.env.CORS_ORIGINS), ...devOrigins])],
 
   mongoUri: process.env.MONGODB_URI || process.env.MONGO_URI || process.env.MONGO_URL || '',
   embeddedMongoPath: process.env.EMBEDDED_MONGO_PATH || '.data/db',
@@ -50,9 +66,7 @@ export const env = {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
     // Defaults to the web app origin: Next.js forwards /api/* to this server, so one public URL is enough.
-    redirectUri:
-      process.env.GOOGLE_REDIRECT_URI ||
-      `${(process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '')}/api/google/oauth/callback`,
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || `${publicFrontend}/api/google/oauth/callback`,
   },
 
   worker: {
@@ -65,3 +79,14 @@ export const env = {
 
 export const googleConfigured = () => Boolean(env.google.clientId && env.google.clientSecret);
 export const groqConfigured = () => Boolean(env.groq.apiKey);
+
+/** True when a browser Origin is allowed by FRONTEND_URL / CORS_ORIGINS (supports * wildcards). */
+export function isAllowedOrigin(origin) {
+  if (!origin) return true; // server-to-server, curl, the Vercel proxy
+  const o = origin.replace(/\/+$/, '');
+  return env.corsOrigins.some((allowed) => {
+    if (!allowed.includes('*')) return allowed === o;
+    const rx = new RegExp(`^${allowed.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9-]+')}$`, 'i');
+    return rx.test(o);
+  });
+}

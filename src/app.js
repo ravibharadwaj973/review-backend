@@ -4,7 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import mongoose from 'mongoose';
-import { env, googleConfigured, groqConfigured } from './config/env.js';
+import { env, googleConfigured, groqConfigured, isAllowedOrigin } from './config/env.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { authRouter } from './modules/auth/routes.js';
 import { businessRouter } from './modules/business/routes.js';
@@ -28,9 +28,9 @@ export function createApp() {
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(
     cors({
+      // Only the website(s) in FRONTEND_URL may call the API from a browser.
       origin(origin, cb) {
-        if (!origin || env.corsOrigins.includes(origin) || !env.isProd) return cb(null, true);
-        cb(new Error(`Origin ${origin} is not allowed`));
+        cb(null, isAllowedOrigin(origin));
       },
       credentials: true,
     })
@@ -46,6 +46,7 @@ export function createApp() {
       db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
       ai: groqConfigured() ? 'groq' : 'fallback',
       google: googleConfigured() ? 'configured' : 'not_configured',
+      frontend: env.appUrl,
       time: new Date().toISOString(),
     });
   });

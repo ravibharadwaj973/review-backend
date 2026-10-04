@@ -8,6 +8,10 @@ async function main() {
   const app = createApp();
   const server = app.listen(env.port, () => {
     console.log(`[api] Starling API listening on http://localhost:${env.port}`);
+    console.log(`[api] Frontend: ${env.appUrl}  (allowed origins: ${env.corsOrigins.join(', ')})`);
+    if (env.isProd && /localhost|127\.0\.0\.1/.test(env.appUrl)) {
+      console.warn('[api] FRONTEND_URL is still localhost — set it to your website address so links and QR codes work.');
+    }
     console.log(`[api] AI: ${groqConfigured() ? `Groq (${env.groq.model})` : 'built-in fallback (set GROQ_API_KEY for Groq)'}`);
     console.log(`[api] Google Business Profile: ${googleConfigured() ? 'OAuth configured' : 'not configured — demo connection available'}`);
   });
