@@ -219,3 +219,38 @@ export function heuristicCustomerReview({ rating = 5, services = [], liked = [],
   if (r >= 4 && !bad.length) parts.push(['Will come again.', 'Would recommend.', 'Will be back.'][v]);
   return parts.join(' ');
 }
+
+
+/** Simple post text when the AI is unavailable. */
+export function heuristicPost({ business, services = [], theme, featured, instruction }) {
+  const name = business.name;
+  const list = services.slice(0, 3).map((s) => s.name.toLowerCase()).join(', ');
+  const texts = {
+    service: `Have you tried our ${String(featured?.name || 'services').toLowerCase()}? ${featured?.description || `It's one of the things people come back to ${name} for.`}\n\nDrop in or book your slot this week.`,
+    tip: `A small tip from the ${name} team: a little care at home goes a long way between visits. Ask us what works best for you next time you're in.\n\nWe're happy to help — book your slot this week.`,
+    reviews: `Thank you to everyone who left us a review. People keep mentioning ${(featured?.praised || ['our friendly team']).slice(0, 2).join(' and ').toLowerCase()}, and it means a lot to us.\n\nSee you again soon.`,
+    team: `A quick hello from the team at ${name}. We love what we do, and we're here to make your visit easy and relaxed.\n\nCome say hi this week.`,
+    faq: `${featured?.question || 'A question we hear a lot'}\n${featured?.answer || 'Ask us — we are happy to help.'}\n\nHave another question? Just ask us.`,
+    festival: `Wishing you a happy ${featured?.name || 'festival'} from all of us at ${name}.${featured?.hoursNote ? ` On ${featured.name} we are ${featured.hoursNote}.` : ''}\n\nSee you soon.`,
+    custom: instruction ? `${instruction}\n\nVisit ${name} this week.` : `Visit ${name} for ${list || 'our services'}. Book your slot this week.`,
+  };
+  // Offer / event titles are left for the owner unless it's a festival greeting
+  const title = theme === 'festival' ? `Happy ${featured?.name || 'holidays'}`.slice(0, 58) : '';
+  return { summary: (texts[theme] || texts.custom).slice(0, 1500), title };
+}
+
+/** Common questions for any local business. Answers come only from known data. */
+export function heuristicQuestions({ business, services = [] }) {
+  const open = (business.hours || []).filter((h) => !h.closed);
+  const hoursText = open.length ? `We're open ${open.length === 7 ? 'every day' : `${open.length} days a week`}, usually ${open[0].open} to ${open[0].close}.` : '';
+  const area = [business.address?.line1, business.address?.city].filter(Boolean).join(', ');
+  return [
+    { question: 'Do I need to book in advance?', answer: business.links?.booking ? 'Booking ahead is best so we can keep a slot for you. You can book online.' : '', needsInput: !business.links?.booking },
+    { question: 'What are your opening hours?', answer: hoursText, needsInput: !hoursText },
+    { question: 'What services do you offer?', answer: services.length ? `We offer ${services.slice(0, 6).map((s) => s.name.toLowerCase()).join(', ')}${services.length > 6 ? ' and more' : ''}.` : '', needsInput: !services.length },
+    { question: 'Where are you located?', answer: area ? `You'll find us at ${area}.` : '', needsInput: !area },
+    { question: 'Is parking available?', answer: '', needsInput: true },
+    { question: 'Which payment methods do you accept?', answer: '', needsInput: true },
+    { question: 'How long does a visit usually take?', answer: '', needsInput: true },
+  ].map((q) => ({ ...q, fromReviews: false }));
+}

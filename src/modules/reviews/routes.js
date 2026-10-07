@@ -102,6 +102,17 @@ reviewsRouter.patch('/:id/draft/:draftId', ah(async (req, res) => {
   res.json({ draft });
 }));
 
+/** Stop an automatic reply from posting; it stays as a draft for you to approve. */
+reviewsRouter.post('/:id/draft/:draftId/hold', ah(async (req, res) => {
+  const draft = await AiResponse.findOneAndUpdate(
+    { _id: req.params.draftId, review: req.params.id, business: req.business._id, status: 'draft' },
+    { $unset: { autoPublishAt: 1 } },
+    { new: true }
+  );
+  if (!draft) throw notFound('Draft');
+  res.json({ draft });
+}));
+
 reviewsRouter.post('/:id/approve', ah(async (req, res) => {
   const body = parse(z.object({ draftId: z.string(), text: z.string().trim().min(1).max(4096) }), req.body);
   const draft = await AiResponse.findOne({ _id: body.draftId, review: req.params.id, business: req.business._id });

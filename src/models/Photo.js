@@ -27,6 +27,11 @@ const photoSchema = new mongoose.Schema(
     mimeType: String,
     size: Number,
     caption: { type: String, default: '' },
+    // Weekly photo schedule: queued photos are posted to Google a few per week
+    queued: { type: Boolean, default: false, index: true },
+    queuePosition: { type: Number, default: 0 },
+    scheduledFor: Date, // next planned posting time (null = waiting for a free slot)
+    postedAt: Date,
     google: {
       syncStatus: {
         type: String,

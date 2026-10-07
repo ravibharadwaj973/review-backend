@@ -269,7 +269,7 @@ googleRouter.get('/sync-status', ah(async (req, res) => res.json(await sync.sync
 googleRouter.post(
   '/push/profile',
   ah(async (req, res) => {
-    const body = parse(z.object({ sections: z.array(z.enum(['name', 'phone', 'website', 'description', 'hours'])).min(1) }), req.body);
+    const body = parse(z.object({ sections: z.array(z.enum(['name', 'phone', 'website', 'description', 'hours', 'specialHours'])).min(1) }), req.body);
     const results = await sync.pushProfile(req.business, body.sections);
     res.json({ results, status: await sync.syncStatus(req.business) });
   })

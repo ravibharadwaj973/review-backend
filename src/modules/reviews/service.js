@@ -1,4 +1,4 @@
-import { Review, AiResponse, Service, Customer, ReviewRequest, GoogleAccount } from '../../models/index.js';
+import { Review, AiResponse, Service, Customer, ReviewRequest, GoogleAccount, Question, Business } from '../../models/index.js';
 import { analyzeReview, generateReply } from '../ai/service.js';
 import * as google from '../google/client.js';
 import { HttpError } from '../../utils/http.js';
@@ -72,12 +72,15 @@ export async function recentReplies(business) {
   return replied.map((r) => r.reply?.comment).filter(Boolean);
 }
 
+export const answeredFaqs = (businessId) =>
+  Question.find({ business: businessId, status: 'answered' }).sort({ updatedAt: -1 }).limit(15).select('question answer').lean();
+
 export async function draftReply(review, business, { tone, instruction } = {}) {
   const services = await Service.find({ business: business._id, active: true }).lean();
   if (!review.analysis?.analyzedAt) await analyzeAndStore(review, business, services);
-  const previousReplies = await recentReplies(business);
+  const [previousReplies, faqs] = await Promise.all([recentReplies(business), answeredFaqs(business._id)]);
   const { text, model, tone: usedTone } = await generateReply({
-    review, analysis: review.analysis, business, services, previousReplies, tone, instruction,
+    review, analysis: review.analysis, business, services, previousReplies, tone, instruction, faqs,
   });
   // Only one live draft per review
   await AiResponse.updateMany({ review: review._id, status: 'draft' }, { status: 'discarded' });
@@ -174,7 +177,36 @@ export async function attributeReview(review, business) {
   return match;
 }
 
-/** Full pipeline for freshly detected reviews: analyse → attribute → draft (→ optional auto-publish). */
+/**
+ * Which reply rule applies to a review: 'auto' (AI posts after a short delay) or 'approve'.
+ * Reviews that look urgent, or whose words don't match the stars, always wait for a person.
+ */
+export function replyRuleFor(business, review) {
+  const rules = business.automation?.replyRules || {};
+  const key = review.rating >= 5 ? 'five' : review.rating === 4 ? 'four' : review.rating === 3 ? 'three' : 'low';
+  const fallback = { five: 'auto', four: 'auto', three: 'approve', low: 'approve' }[key];
+  const rule = rules[key] || fallback;
+  if (rule !== 'auto') return { rule: 'approve', reason: 'Your rule: approve first' };
+  const a = review.analysis || {};
+  if (a.urgency === 'high') return { rule: 'approve', reason: 'Looks urgent — held for you' };
+  if (review.rating >= 4 && ['negative', 'mixed'].includes(a.sentiment)) return { rule: 'approve', reason: 'Stars and words don’t match — held for you' };
+  if ((a.concerns || []).length && review.rating >= 4) return { rule: 'approve', reason: 'Mentions a problem — held for you' };
+  return { rule: 'auto', reason: 'Posts automatically' };
+}
+
+/** Marks a draft to be posted automatically if the business's rules allow it. */
+export async function applyReplyRule(draft, review, business, { extraDelayMinutes = 0 } = {}) {
+  if (business.automation?.autoDraftReplies === false) return { rule: 'approve' };
+  const decision = replyRuleFor(business, review);
+  if (decision.rule === 'auto') {
+    const delay = Number(business.automation?.replyDelayMinutes ?? 30) + extraDelayMinutes;
+    draft.autoPublishAt = new Date(Date.now() + delay * 60_000);
+    await draft.save();
+  }
+  return decision;
+}
+
+/** Full pipeline for freshly detected reviews: analyse → attribute → draft → (auto-post per reply rules). */
 export async function processNewReviews(business, reviews) {
   if (!reviews.length) return;
   const services = await Service.find({ business: business._id, active: true }).lean();
@@ -184,12 +216,59 @@ export async function processNewReviews(business, reviews) {
       await attributeReview(review, business);
       if (review.status === 'unanswered' && business.automation?.autoDraftReplies !== false) {
         const draft = await draftReply(review, business);
-        if (business.automation?.autoPublishFiveStar && review.rating === 5 && review.analysis?.sentiment === 'positive') {
-          await publishReply({ review, business, text: draft.text, aiResponseId: draft._id });
-        }
+        await applyReplyRule(draft, review, business);
       }
     } catch (err) {
       console.warn(`[reviews] pipeline failed for ${review._id}:`, err.message);
     }
   }
+}
+
+/**
+ * Drafts replies for older reviews that never got one, and lines them up per the reply rules.
+ * Auto replies are spaced a few minutes apart so they don't all appear at once.
+ */
+export async function draftBacklog(business, { limit = 30 } = {}) {
+  const reviews = await Review.find({ business: business._id, status: { $in: ['unanswered', 'drafted'] } }).sort({ createTime: -1 }).limit(limit);
+  let drafted = 0;
+  let scheduled = 0;
+  for (const review of reviews) {
+    try {
+      let draft = await AiResponse.findOne({ review: review._id, status: 'draft' }).sort({ createdAt: -1 });
+      if (!draft) {
+        draft = await draftReply(review, business);
+        drafted += 1;
+      }
+      if (!draft.autoPublishAt) {
+        const d = await applyReplyRule(draft, review, business, { extraDelayMinutes: scheduled * 3 });
+        if (d.rule === 'auto') scheduled += 1;
+      }
+    } catch (err) {
+      console.warn(`[reviews] backlog draft failed for ${review._id}:`, err.message);
+    }
+  }
+  return { reviews: reviews.length, drafted, scheduled };
+}
+
+/** Publishes AI replies whose automatic posting time has come. Used by the worker. */
+export async function publishDueReplies({ limit = 25, businessId } = {}) {
+  const due = await AiResponse.find({ status: 'draft', autoPublishAt: { $lte: new Date() }, ...(businessId ? { business: businessId } : {}) }).sort({ autoPublishAt: 1 }).limit(limit);
+  let published = 0;
+  for (const draft of due) {
+    const [review, business] = await Promise.all([Review.findById(draft.review), Business.findById(draft.business)]);
+    if (!review || !business || review.status === 'answered') {
+      draft.status = 'discarded';
+      draft.autoPublishAt = undefined;
+      await draft.save();
+      continue;
+    }
+    try {
+      await publishReply({ review, business, text: draft.finalText || draft.text, aiResponseId: draft._id });
+      published += 1;
+    } catch (err) {
+      await AiResponse.updateOne({ _id: draft._id }, { $unset: { autoPublishAt: 1 }, status: 'failed', error: err.message });
+      console.warn(`[autopilot] auto reply failed for ${review._id}: ${err.message}`);
+    }
+  }
+  return published;
 }

@@ -17,6 +17,9 @@ import { requestsRouter } from './modules/requests/routes.js';
 import { aiRouter } from './modules/ai/routes.js';
 import { analyticsRouter } from './modules/analytics/routes.js';
 import { publicRouter } from './modules/public/routes.js';
+import { postsRouter } from './modules/posts/routes.js';
+import { questionsRouter } from './modules/questions/routes.js';
+import { autopilotRouter } from './modules/autopilot/routes.js';
 
 export function createApp() {
   const app = express();
@@ -62,6 +65,9 @@ export function createApp() {
   app.use('/api/ai', aiRouter);
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/public', publicRouter);
+  app.use('/api/posts', postsRouter);
+  app.use('/api/questions', questionsRouter);
+  app.use('/api/autopilot', autopilotRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

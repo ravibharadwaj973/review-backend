@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { env } from '../config/env.js';
 import { syncAllBusinesses } from '../modules/google/sync.js';
+import { runAutopilotAll } from '../modules/autopilot/runner.js';
 
 let running = false;
 
@@ -19,13 +20,30 @@ export async function runReviewSync() {
   }
 }
 
-export function startScheduler() {
-  if (!cron.validate(env.worker.reviewSyncCron)) {
-    console.warn(`[worker] invalid REVIEW_SYNC_CRON "${env.worker.reviewSyncCron}", scheduler disabled`);
-    return () => {};
+/** Autopilot: posts due replies, photos and Google posts; plans the coming week; switches seasonal hours. */
+export async function runAutopilot() {
+  try {
+    await runAutopilotAll();
+  } catch (err) {
+    console.error('[worker] autopilot failed:', err.message);
   }
-  const task = cron.schedule(env.worker.reviewSyncCron, runReviewSync);
-  console.log(`[worker] review monitoring scheduled (${env.worker.reviewSyncCron})`);
-  setTimeout(runReviewSync, 10_000);
-  return () => task.stop();
+}
+
+export function startScheduler() {
+  const tasks = [];
+  if (cron.validate(env.worker.reviewSyncCron)) {
+    tasks.push(cron.schedule(env.worker.reviewSyncCron, runReviewSync));
+    console.log(`[worker] review monitoring scheduled (${env.worker.reviewSyncCron})`);
+    setTimeout(runReviewSync, 10_000);
+  } else {
+    console.warn(`[worker] invalid REVIEW_SYNC_CRON "${env.worker.reviewSyncCron}", review sync disabled`);
+  }
+  if (cron.validate(env.worker.autopilotCron)) {
+    tasks.push(cron.schedule(env.worker.autopilotCron, runAutopilot));
+    console.log(`[worker] autopilot scheduled (${env.worker.autopilotCron})`);
+    setTimeout(runAutopilot, 20_000);
+  } else {
+    console.warn(`[worker] invalid AUTOPILOT_CRON "${env.worker.autopilotCron}", autopilot disabled`);
+  }
+  return () => tasks.forEach((t) => t.stop());
 }

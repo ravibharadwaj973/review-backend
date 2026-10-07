@@ -3,6 +3,7 @@ import { GOOGLE_MEDIA_CATEGORY } from '../../models/Photo.js';
 import * as google from './client.js';
 import { ingestReviews, fromGoogleReview, processNewReviews } from '../reviews/service.js';
 import { env } from '../../config/env.js';
+import { effectiveHours, hoursSignature, specialHoursToGoogle } from '../hours/service.js';
 
 export async function loadAccount(businessId) {
   return GoogleAccount.findOne({ business: businessId }).select('+accessTokenEnc +refreshTokenEnc');
@@ -54,6 +55,7 @@ export async function refreshRemoteSnapshot(business) {
     address: google.formatAddress(loc.storefrontAddress),
     hours: google.hoursFromGoogle(loc.regularHours),
     serviceCount: (loc.serviceItems || []).length,
+    specialCount: (loc.specialHours?.specialHourPeriods || []).length,
     photoCount,
     fetchedAt: new Date(),
   };
@@ -67,6 +69,7 @@ const SECTION_MASKS = {
   website: ['websiteUri'],
   description: ['profile.description'],
   hours: ['regularHours'],
+  specialHours: ['specialHours'],
 };
 
 /**
@@ -95,14 +98,17 @@ export async function pushProfile(business, sections) {
     if (section === 'phone') patch.phoneNumbers = { primaryPhone: business.phone };
     if (section === 'website') patch.websiteUri = business.links?.website || '';
     if (section === 'description') patch.profile = { description: business.description };
-    if (section === 'hours') patch.regularHours = google.hoursToGoogle(business.hours);
+    if (section === 'hours') patch.regularHours = google.hoursToGoogle(effectiveHours(business));
+    if (section === 'specialHours') patch.specialHours = specialHoursToGoogle(business);
     try {
       await google.updateLocation(account, account.locationName, patch, mask);
       results[section] = { status: 'synced' };
+      if (section === 'hours') business.googleHoursSig = hoursSignature(effectiveHours(business));
     } catch (err) {
       results[section] = { status: 'failed', message: err.message };
     }
   }
+  if (business.isModified?.('googleHoursSig')) await business.save();
   await refreshRemoteSnapshot(business).catch(() => null);
   return results;
 }
@@ -192,7 +198,7 @@ export async function syncStatus(business) {
     if (!app && !remote) return 'empty';
     return eq(app, remote) ? 'synced' : 'different';
   };
-  const hoursEqual = JSON.stringify((business.hours || []).map((h) => [h.day, h.closed ? 'x' : `${h.open}-${h.close}`]))
+  const hoursEqual = JSON.stringify(effectiveHours(business).map((h) => [h.day, h.closed ? 'x' : `${h.open}-${h.close}`]))
     === JSON.stringify((r.hours || []).map((h) => [h.day, h.closed ? 'x' : `${h.open}-${h.close}`]));
 
   const sections = [
@@ -201,6 +207,12 @@ export async function syncStatus(business) {
     { key: 'website', label: 'Website', app: business.links?.website, google: r.website, status: cmp(business.links?.website, r.website), pushable: true },
     { key: 'description', label: 'Description', app: business.description, google: r.description, status: cmp(business.description, r.description), pushable: true },
     { key: 'hours', label: 'Opening hours', app: 'Weekly hours', google: r.hours ? 'Weekly hours' : '', status: !account ? 'not_connected' : demo ? 'demo' : !r.fetchedAt ? 'unknown' : hoursEqual ? 'synced' : 'different', pushable: true },
+    {
+      key: 'specialHours', label: 'Holiday & special hours',
+      app: `${specialHoursToGoogle(business).specialHourPeriods.length} date(s)`, google: r.specialCount != null ? `${r.specialCount} date(s)` : '',
+      status: !account ? 'not_connected' : demo ? 'demo' : !r.fetchedAt ? 'unknown' : r.specialCount === specialHoursToGoogle(business).specialHourPeriods.length ? 'synced' : 'different',
+      pushable: true,
+    },
     { key: 'address', label: 'Address', app: [business.address?.line1, business.address?.city].filter(Boolean).join(', '), google: r.address, status: !account ? 'not_connected' : demo ? 'demo' : 'google_managed', pushable: false, note: 'Address changes require Google verification — edit it in Google.' },
     {
       key: 'services', label: 'Services / menu', app: serviceCount, google: demo ? servicesSynced : r.serviceCount ?? null,

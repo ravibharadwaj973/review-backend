@@ -20,7 +20,8 @@ const TONES = {
   concise: 'short and to the point — two sentences maximum',
 };
 
-function businessContext(business, services = []) {
+function businessContext(business, services = [], faqs = []) {
+  const known = (faqs || []).filter((f) => f.answer?.trim()).slice(0, 15);
   const svc = services.length
     ? services.map((s) => `- ${s.name}${s.category ? ` (${s.category})` : ''}${s.price != null ? `, ₹${s.price}` : ''}`).join('\n')
     : '- (no services listed)';
@@ -31,6 +32,7 @@ function businessContext(business, services = []) {
     business.phone ? `Phone: ${business.phone}` : null,
     business.description ? `About: ${business.description}` : null,
     `Services:\n${svc}`,
+    known.length ? `Facts from the owner (questions customers ask):\n${known.map((f) => `- Q: ${f.question} A: ${f.answer}`).join('\n')}` : null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -97,7 +99,7 @@ Use consistent theme names such as: Staff behaviour, Service quality, Cleanlines
 }
 
 /** Draft a reply to a review in the business's voice. */
-export async function generateReply({ review, analysis, business, services, previousReplies = [], tone, instruction }) {
+export async function generateReply({ review, analysis, business, services, previousReplies = [], tone, instruction, faqs = [] }) {
   const voice = tone || business.voice?.tone || 'warm';
   try {
     const examples = previousReplies.filter(Boolean).slice(0, 3);
@@ -114,7 +116,7 @@ ${business.voice?.avoid ? `Avoid: ${business.voice.avoid}` : ''}
 ${HUMAN_STYLE}
 ${SAFETY}
 Return only the reply text — no quotes, no preamble.`,
-      user: `${businessContext(business, services)}
+      user: `${businessContext(business, services, faqs)}
 
 ${examples.length ? `Previous replies from this business (match the style, do not copy):\n${examples.map((e) => `- ${e}`).join('\n')}\n\n` : ''}Review by ${review.reviewer?.name || 'a customer'} — ${review.rating}/5 stars:
 """${review.comment || '(rating only, no text)'}"""
@@ -355,5 +357,114 @@ Write version #${variant + 1}${variant ? ' — make it clearly different in word
   } catch (err) {
     logFallback('compose', err);
     return { text: H.heuristicCustomerReview({ rating, services, liked, disliked, note, staff, variant }), model: 'heuristic' };
+  }
+}
+
+
+/* ------------------------------------------------------------------------- */
+/* Google posts                                                               */
+/* ------------------------------------------------------------------------- */
+
+const THEME_BRIEF = {
+  service: (f) => `Spotlight one service: "${f?.name}"${f?.description ? ` (${f.description})` : ''}${f?.price ? `, from ₹${f.price}` : ''}. Say what it is, who it's for and how it feels. Use the price only if given.`,
+  tip: (f) => `Share one genuinely useful, practical tip related to ${f?.name ? `"${f.name}"` : 'the services'} that a customer can use at home. Then one line on how the business can help.`,
+  reviews: (f) => `Thank customers in general for their reviews and share what they say they like most: ${(f?.praised || []).join(', ') || 'friendly service'}. Do not quote anyone or use names. Do not invent ratings.`,
+  team: () => 'A warm "behind the scenes" post about the team and the place, based only on the business context.',
+  faq: (f) => `Answer a question customers often ask. Question: "${f?.question}". Answer (use only this): "${f?.answer}". Start with the question.`,
+  festival: (f) => `A short greeting for ${f?.name} (${f?.date}).${f?.hoursNote ? ` Clearly mention the hours for that day: ${f.hoursNote}.` : ''} Keep it warm and inclusive.`,
+  custom: (f) => f?.instruction || 'A short update that makes people want to visit.',
+};
+
+const POST_RULES = `Rules for Google posts:
+- 40 to 110 words. Plain text. One or two short paragraphs. No hashtags, no emojis, no ALL CAPS.
+- Never include phone numbers or links in the text (Google rejects them) — the button handles that.
+- Never invent offers, discounts, prices, awards or claims that aren't in the business context.
+- End with a simple, natural nudge (e.g. "Book your slot this week.").`;
+
+export async function generatePost({ business, services = [], faqs = [], theme = 'custom', featured, type = 'STANDARD', instruction }) {
+  const brief = (THEME_BRIEF[theme] || THEME_BRIEF.custom)({ ...(featured || {}), instruction });
+  const needsTitle = type === 'OFFER' || type === 'EVENT';
+  try {
+    const { data, model } = await chatJSON({
+      temperature: 0.8,
+      maxTokens: 500,
+      system: `You write Google Business Profile posts for a local business, in its own voice ("we").
+Tone: ${TONES[business.voice?.tone] || TONES.warm}. Language: ${business.voice?.language || 'English'}.
+${POST_RULES}
+${HUMAN_STYLE}
+${SAFETY}
+Return JSON {"title": "${needsTitle ? `short ${type === 'OFFER' ? 'offer' : 'event'} title, max 58 characters` : ''}", "summary": "the post text"}.`,
+      user: `${businessContext(business, services, faqs)}
+
+Post type: ${type === 'OFFER' ? 'Offer' : type === 'EVENT' ? 'Event' : 'Update'}
+What to write: ${brief}
+${instruction && theme !== 'custom' ? `Owner's note: ${instruction}` : ''}`,
+    });
+    const summary = String(data.summary || '').replace(/^["'“]|["'”]$/g, '').trim();
+    if (!summary) throw new Error('empty post');
+    return { summary: summary.slice(0, 1500), title: String(data.title || '').trim().slice(0, 58), model };
+  } catch (err) {
+    logFallback('post', err);
+    return { ...H.heuristicPost({ business, services, theme, featured, instruction }), model: 'heuristic' };
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Customer questions                                                         */
+/* ------------------------------------------------------------------------- */
+
+const QA_RULES = `Answer ONLY from the business context and the owner's facts. If the context does not contain the answer, return an empty answer and needsInput true — never guess times, prices, parking, payment methods or policies.`;
+
+export async function suggestQuestions({ business, services = [], faqs = [], reviewSnippets = [], existing = [] }) {
+  try {
+    const { data, model } = await chatJSON({
+      temperature: 0.4,
+      maxTokens: 1500,
+      system: `You list the questions customers most often ask a local business before visiting, and draft answers.
+Return JSON {"questions":[{"question":"...","answer":"...","needsInput":true|false,"fromReviews":true|false}]} with 8 items.
+Questions should be short and practical (booking, timings, prices, parking, payment, duration, hygiene, kids, home service, etc.) and specific to this type of business.
+Use the customer reviews to spot real questions and worries (set fromReviews true for those).
+${QA_RULES}
+Answers: 1–2 short sentences, friendly, simple English.`,
+      user: `${businessContext(business, services, faqs)}
+
+Recent customer reviews:
+${reviewSnippets.slice(0, 15).map((r) => `- ${r}`).join('\n') || '(none)'}
+
+Already listed (don't repeat): ${existing.join(' | ') || 'none'}`,
+    });
+    const seen = new Set(existing.map((q) => q.toLowerCase().trim()));
+    const list = (Array.isArray(data.questions) ? data.questions : [])
+      .map((q) => ({
+        question: String(q.question || '').trim().slice(0, 300),
+        answer: String(q.answer || '').trim().slice(0, 1500),
+        needsInput: Boolean(q.needsInput) || !String(q.answer || '').trim(),
+        fromReviews: Boolean(q.fromReviews),
+      }))
+      .filter((q) => q.question && !seen.has(q.question.toLowerCase()));
+    if (!list.length) throw new Error('no questions');
+    return { questions: list.slice(0, 10), model };
+  } catch (err) {
+    logFallback('questions', err);
+    return { questions: H.heuristicQuestions({ business, services }).filter((q) => !existing.map((e) => e.toLowerCase()).includes(q.question.toLowerCase())), model: 'heuristic' };
+  }
+}
+
+export async function answerQuestion({ business, services = [], faqs = [], question }) {
+  try {
+    const { data, model } = await chatJSON({
+      temperature: 0.3,
+      maxTokens: 300,
+      system: `You answer a customer's question for a local business, as the business ("we"). Return JSON {"answer":"...","needsInput":true|false}.
+${QA_RULES}
+Answer in 1–2 short sentences.
+${HUMAN_STYLE}`,
+      user: `${businessContext(business, services, faqs)}\n\nQuestion: ${question}`,
+    });
+    const answer = String(data.answer || '').trim().slice(0, 1500);
+    return { answer, needsInput: Boolean(data.needsInput) || !answer, model };
+  } catch (err) {
+    logFallback('answer', err);
+    return { answer: '', needsInput: true, model: 'heuristic' };
   }
 }

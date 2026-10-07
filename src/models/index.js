@@ -8,3 +8,5 @@ export { Review } from './Review.js';
 export { AiResponse } from './AiResponse.js';
 export { ReviewRequest } from './ReviewRequest.js';
 export { Photo, PHOTO_CATEGORIES, GOOGLE_MEDIA_CATEGORY } from './Photo.js';
+export { Post, POST_TYPES, POST_ACTIONS, POST_THEMES } from './Post.js';
+export { Question } from './Question.js';

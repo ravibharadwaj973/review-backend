@@ -114,3 +114,83 @@ test('business slugs are URL-safe', async () => {
   assert.equal(Business.slugify('Café Délice'), 'cafe-delice');
   assert.equal(Business.slugify('***'), 'business');
 });
+
+/* ---------------------------------------------------------------- autopilot */
+
+const { photoSlots, postSlots } = await import('../src/modules/autopilot/slots.js');
+const { effectiveHours, specialHoursToGoogle, holidayPlan } = await import('../src/modules/hours/service.js');
+const { replyRuleFor } = await import('../src/modules/reviews/service.js');
+const { validatePost, toGooglePost } = await import('../src/modules/posts/service.js');
+const { zonedDate, weekStartYmd } = await import('../src/utils/time.js');
+
+const week = (open = '10:00', close = '20:00') => ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => ({ day, open, close, closed: false }));
+
+test('photo slots spread N photos over different days in IST', () => {
+  const slots = photoSlots('2026-10-05', 4, 'Asia/Kolkata');
+  assert.equal(slots.length, 4);
+  assert.equal(new Set(slots.map((s) => s.ymd)).size, 4);
+  assert.equal(slots[0].ymd, '2026-10-05');
+  assert.equal(slots[0].at.toISOString(), '2026-10-05T05:00:00.000Z'); // 10:30 IST
+  assert.equal(photoSlots('2026-10-05', 0, 'Asia/Kolkata').length, 0);
+});
+
+test('post slots start on the chosen day and time', () => {
+  const [one] = postSlots('2026-10-05', { perWeek: 1, day: 'tuesday', time: '11:00' }, 'Asia/Kolkata');
+  assert.equal(one.ymd, '2026-10-06');
+  assert.equal(one.at.toISOString(), '2026-10-06T05:30:00.000Z');
+  assert.equal(postSlots('2026-10-05', { perWeek: 3, day: 'monday', time: '09:00' }, 'Asia/Kolkata').length, 3);
+});
+
+test('week starts on Monday in the business timezone', () => {
+  // 1 am IST on Monday is still Sunday in UTC
+  assert.equal(weekStartYmd(zonedDate('2026-10-12', '01:00', 'Asia/Kolkata'), 'Asia/Kolkata'), '2026-10-12');
+});
+
+test('seasonal hours apply only inside their dates', () => {
+  const b = { timezone: 'Asia/Kolkata', hours: week(), seasonalHours: [{ name: 'Winter', start: '2026-12-01', end: '2027-02-28', hours: week('11:00', '19:00') }] };
+  assert.equal(effectiveHours(b, new Date('2026-10-07T06:00:00Z'))[0].open, '10:00');
+  assert.equal(effectiveHours(b, new Date('2026-12-15T06:00:00Z'))[0].open, '11:00');
+});
+
+test('special hours go to Google from today on, closed days and late closes handled', () => {
+  const b = { timezone: 'Asia/Kolkata', specialHours: [
+    { date: '2026-01-26', closed: true },
+    { date: '2026-11-08', closed: false, open: '10:00', close: '14:00' },
+    { date: '2026-12-31', closed: false, open: '18:00', close: '01:00' },
+  ] };
+  const { specialHourPeriods: p } = specialHoursToGoogle(b, new Date('2026-10-07T06:00:00Z'));
+  assert.equal(p.length, 2);
+  assert.deepEqual(p[0].openTime, { hours: 10, minutes: 0 });
+  assert.deepEqual(p[1].endDate, { year: 2027, month: 1, day: 1 });
+});
+
+test('holiday plan marks which holidays already have hours', () => {
+  const plan = holidayPlan({ timezone: 'Asia/Kolkata', specialHours: [{ date: '2026-11-08', closed: true }] }, { days: 40, date: new Date('2026-10-07T06:00:00Z') });
+  const diwali = plan.find((h) => h.name === 'Diwali');
+  assert.ok(diwali.set);
+  assert.ok(plan.some((h) => h.name === 'Dussehra' && !h.set && h.daysAway === 13));
+});
+
+test('reply rules: auto for happy reviews, held when urgent or mismatched', () => {
+  const biz = { automation: { replyRules: { five: 'auto', four: 'auto', three: 'approve', low: 'approve' } } };
+  assert.equal(replyRuleFor(biz, { rating: 5, analysis: { sentiment: 'positive', urgency: 'low' } }).rule, 'auto');
+  assert.equal(replyRuleFor(biz, { rating: 3, analysis: { sentiment: 'neutral' } }).rule, 'approve');
+  assert.equal(replyRuleFor(biz, { rating: 4, analysis: { sentiment: 'mixed' } }).rule, 'approve');
+  assert.equal(replyRuleFor(biz, { rating: 5, analysis: { sentiment: 'positive', urgency: 'high' } }).rule, 'approve');
+  assert.equal(replyRuleFor({ automation: { replyRules: { low: 'auto' } } }, { rating: 1, analysis: { urgency: 'low', sentiment: 'negative' } }).rule, 'auto');
+});
+
+test('posts: phone numbers and missing offer details are rejected', () => {
+  assert.match(validatePost({ summary: 'Call 98110 24567 today', action: 'NONE' }), /phone/);
+  assert.equal(validatePost({ summary: 'Closed on 2026-10-20 for Dussehra', action: 'NONE' }), null);
+  assert.match(validatePost({ type: 'OFFER', summary: 'Hair spa week', action: 'NONE' }), /title/);
+  assert.match(validatePost({ summary: 'Book now', action: 'BOOK', actionUrl: '' }), /link/);
+});
+
+test('offer posts carry an event schedule and offer details for Google', () => {
+  const body = toGooglePost({ type: 'OFFER', summary: 'x', title: 'Spa week', startDate: '2026-10-15', endDate: '2026-10-25', couponCode: 'SPA10', action: 'CALL' }, null);
+  assert.equal(body.topicType, 'OFFER');
+  assert.deepEqual(body.event.schedule.endDate, { year: 2026, month: 10, day: 25 });
+  assert.equal(body.offer.couponCode, 'SPA10');
+  assert.deepEqual(body.callToAction, { actionType: 'CALL' });
+});

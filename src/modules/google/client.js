@@ -100,7 +100,7 @@ export async function listAccounts(account) {
 
 const LOCATION_READ_MASK = [
   'name', 'title', 'phoneNumbers', 'categories', 'storefrontAddress', 'websiteUri',
-  'regularHours', 'profile', 'metadata', 'serviceItems',
+  'regularHours', 'specialHours', 'profile', 'metadata', 'serviceItems',
 ].join(',');
 
 export async function listLocations(account, accountName) {
@@ -159,6 +159,17 @@ export function createMedia(account, { sourceUrl, category, description }) {
     method: 'POST',
     body: { mediaFormat: 'PHOTO', locationAssociation: { category }, sourceUrl, description },
   });
+}
+
+// ---- Posts (v4 localPosts) -------------------------------------------------
+
+export function createLocalPost(account, body) {
+  return call(account, `${v4Location(account)}/localPosts`, { method: 'POST', body });
+}
+
+/** name is the full resource name returned when the post was created */
+export function deleteLocalPost(account, name) {
+  return call(account, `${V4_API}/${name}`, { method: 'DELETE' });
 }
 
 // ---- Mapping helpers ------------------------------------------------------

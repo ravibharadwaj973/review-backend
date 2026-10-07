@@ -5,12 +5,17 @@ import { ah, parse } from '../../utils/http.js';
 import { Location, Business } from '../../models/index.js';
 import { env } from '../../config/env.js';
 import { conflict } from '../../utils/http.js';
+import { GoogleAccount } from '../../models/index.js';
+import { pushProfile } from '../google/sync.js';
+import { holidayPlan, activeSeason } from '../hours/service.js';
 
 export const businessRouter = Router();
 businessRouter.use(requireAuth, requireBusiness);
 
 const time = z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM');
 const url = z.union([z.literal(''), z.string().trim().url('Enter a full URL starting with https://')]);
+
+const weekHours = z.array(z.object({ day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']), open: time, close: time, closed: z.boolean() })).length(7);
 
 const businessSchema = z
   .object({
@@ -27,7 +32,13 @@ const businessSchema = z
       postalCode: z.string().max(20).optional(),
       country: z.string().max(2).optional(),
     }),
-    hours: z.array(z.object({ day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']), open: time, close: time, closed: z.boolean() })).length(7),
+    hours: weekHours,
+    seasonalHours: z.array(z.object({
+      name: z.string().trim().min(1, 'Name the season').max(60),
+      start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose a start date'),
+      end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose an end date'),
+      hours: weekHours,
+    }).refine((x) => x.start <= x.end, { message: 'The season must end after it starts', path: ['end'] })).max(6),
     specialHours: z.array(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), open: time.optional().or(z.literal('')), close: time.optional().or(z.literal('')), closed: z.boolean(), note: z.string().max(120).optional() })).max(60),
     serviceAreas: z.array(z.string().trim().max(80)).max(20),
     links: z.object({
@@ -48,6 +59,8 @@ const businessSchema = z
       autoAnalyze: z.boolean().optional(),
       autoDraftReplies: z.boolean().optional(),
       autoPublishFiveStar: z.boolean().optional(),
+      replyDelayMinutes: z.number().int().min(0).max(1440).optional(),
+      syncHoursToGoogle: z.boolean().optional(),
     }),
     reviewLink: url,
   })
@@ -72,9 +85,26 @@ businessRouter.patch(
     }
     if (b.name && b.category && (b.phone || b.address?.city)) b.onboarding.profile = true;
     await b.save();
-    res.json({ business: b });
+
+    // Hours changed: send them to Google straight away so customers see the right times
+    let googleSync = null;
+    const hoursTouched = ['hours', 'specialHours', 'seasonalHours'].some((k) => k in body);
+    if (hoursTouched && b.automation?.syncHoursToGoogle !== false && (await GoogleAccount.exists({ business: b._id }))) {
+      try {
+        googleSync = await pushProfile(b, ['hours', 'specialHours']);
+      } catch (err) {
+        googleSync = { hours: { status: 'failed', message: err.message } };
+      }
+    }
+    res.json({ business: b, googleSync });
   })
 );
+
+/** Upcoming public holidays and whether hours are set for them. */
+businessRouter.get('/holidays', ah(async (req, res) => {
+  const season = activeSeason(req.business);
+  res.json({ holidays: holidayPlan(req.business, { days: 180 }), season: season ? { name: season.name, start: season.start, end: season.end } : null });
+}));
 
 /** The business's QR code link and its scan stats. */
 businessRouter.get('/share', ah(async (req, res) => {

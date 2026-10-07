@@ -29,6 +29,7 @@ const googleAccountSchema = new mongoose.Schema(
       address: String,
       hours: mongoose.Schema.Types.Mixed,
       serviceCount: Number,
+      specialCount: Number,
       photoCount: Number,
       fetchedAt: Date,
     },

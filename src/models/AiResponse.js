@@ -16,6 +16,8 @@ const aiResponseSchema = new mongoose.Schema(
     publishedAt: Date,
     publishedTo: { type: String, enum: ['google', 'demo', 'app'] },
     error: String,
+    // Set when a reply rule says "post automatically": the worker publishes it at this time
+    autoPublishAt: Date,
   },
   { timestamps: true }
 );

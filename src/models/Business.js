@@ -76,9 +76,52 @@ const businessSchema = new mongoose.Schema(
       requestDelayHours: { type: Number, default: 2, min: 0, max: 720 },
       autoAnalyze: { type: Boolean, default: true },
       autoDraftReplies: { type: Boolean, default: true },
-      // Off by default: replies are never published without approval unless the owner opts in.
+      // Older setting, kept for existing data. Reply rules below replace it.
       autoPublishFiveStar: { type: Boolean, default: false },
+      // What happens to the AI reply for each star rating:
+      //   auto    — AI posts it by itself after replyDelayMinutes (you can still edit or hold it)
+      //   approve — AI drafts it and waits for you
+      replyRules: {
+        five: { type: String, enum: ['auto', 'approve'], default: 'auto' },
+        four: { type: String, enum: ['auto', 'approve'], default: 'auto' },
+        three: { type: String, enum: ['auto', 'approve'], default: 'approve' },
+        low: { type: String, enum: ['auto', 'approve'], default: 'approve' }, // 1–2 stars
+      },
+      replyDelayMinutes: { type: Number, default: 30, min: 0, max: 1440 },
+      // Push hours / holiday hours to Google as soon as they are saved
+      syncHoursToGoogle: { type: Boolean, default: true },
     },
+
+    // Weekly autopilot that keeps the Google profile active
+    autopilot: {
+      photos: {
+        enabled: { type: Boolean, default: true },
+        perWeek: { type: Number, default: 4, min: 0, max: 7 },
+        autoQueueUploads: { type: Boolean, default: true }, // new uploads join the queue
+      },
+      posts: {
+        enabled: { type: Boolean, default: true },
+        perWeek: { type: Number, default: 1, min: 0, max: 3 },
+        autoPublish: { type: Boolean, default: false }, // false = AI drafts wait for approval
+        day: { type: String, enum: DAYS, default: 'tuesday' },
+        time: { type: String, default: '11:00' },
+      },
+    },
+
+    // Different weekly hours for part of the year (e.g. summer timings). Applied automatically.
+    seasonalHours: [
+      new mongoose.Schema(
+        {
+          name: { type: String, default: 'Seasonal hours' },
+          start: { type: String, required: true }, // YYYY-MM-DD
+          end: { type: String, required: true },
+          hours: [hoursSchema],
+        },
+        { _id: true }
+      ),
+    ],
+    // Fingerprint of the weekly hours last sent to Google (so season changes are pushed once)
+    googleHoursSig: String,
 
     // Fallback review link when no Google location is connected
     reviewLink: { type: String, default: '' },

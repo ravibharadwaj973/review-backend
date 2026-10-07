@@ -72,6 +72,8 @@ export const env = {
   worker: {
     inProcess: (process.env.RUN_WORKER ?? 'true') !== 'false',
     reviewSyncCron: process.env.REVIEW_SYNC_CRON || '*/15 * * * *',
+    // Autopilot: auto replies, weekly photos and posts, seasonal hours
+    autopilotCron: process.env.AUTOPILOT_CRON || '*/5 * * * *',
   },
 
   uploadDir: process.env.UPLOAD_DIR || 'uploads',

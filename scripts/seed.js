@@ -28,7 +28,7 @@ if (existing) {
   const b = await M.Business.findOne({ owner: existing._id });
   if (b) {
     await Promise.all(
-      ['Service', 'Customer', 'GoogleAccount', 'Review', 'AiResponse', 'ReviewRequest', 'Photo', 'Location'].map((m) => M[m].deleteMany({ business: b._id }))
+      ['Service', 'Customer', 'GoogleAccount', 'Review', 'AiResponse', 'ReviewRequest', 'Photo', 'Location', 'Post', 'Question'].map((m) => M[m].deleteMany({ business: b._id }))
     );
     await b.deleteOne();
   }
