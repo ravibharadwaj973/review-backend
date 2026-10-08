@@ -9,6 +9,7 @@ import {
 } from '../../models/index.js';
 import { env, googleConfigured, isAdminUrl } from '../../config/env.js';
 import { syncReviews, refreshRemoteSnapshot, loadAccount } from '../google/sync.js';
+import { normalizeReviewLink, usableReviewLink } from '../../utils/review-link.js';
 import {
   accountState, allocatePayment, billingSummary, createInvoice, invoiceDocument, invoiceNextPeriod, log, recalcInvoice, refreshAccount, addMonths,
 } from '../billing/service.js';
@@ -150,6 +151,7 @@ const accountSchema = z.object({
   trialEndsAt: z.string().nullable().optional(),
   autoInvoice: z.boolean().optional(),
   adminNotes: z.string().max(4000).optional(),
+  reviewLink: z.string().max(600).transform(normalizeReviewLink).refine((v) => v === '' || /^https?:\/\/[^\s]+\.[^\s]+/.test(v), 'Paste the full Google review link (https://…) or the Place ID').optional(),
 }).refine((x) => !(x.discountType === 'percent' && x.discountValue > 100), { message: 'A percent discount can’t be more than 100', path: ['discountValue'] });
 
 /** Create a business account by hand (owner gets the email + password you set). */
@@ -238,10 +240,16 @@ adminRouter.patch('/accounts/:id', ah(async (req, res) => {
   if ('trialEndsAt' in body) acc.trialEndsAt = body.trialEndsAt ? new Date(body.trialEndsAt) : undefined;
   b.set('account', acc);
   if ('adminNotes' in body) b.adminNotes = body.adminNotes;
+  if ('reviewLink' in body) {
+    // Never cleared — only replaced with another link
+    if (!body.reviewLink && usableReviewLink(b.reviewLink)) throw badRequest('The Google review link can’t be removed. Paste a new link to change it.');
+    if (body.reviewLink) b.reviewLink = body.reviewLink;
+  }
   await b.save();
-  const changed = Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'adminNotes'));
+  const changed = Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'adminNotes' && k !== 'reviewLink'));
   if (Object.keys(changed).length) await log(req.user._id, b._id, 'account.updated', { before, after: changed });
   if ('adminNotes' in body) await log(req.user._id, b._id, 'account.notes', {});
+  if (body.reviewLink) await log(req.user._id, b._id, 'account.review_link', { reviewLink: body.reviewLink });
   res.json({ ok: true, billing: await billingSummary(b) });
 }));
 

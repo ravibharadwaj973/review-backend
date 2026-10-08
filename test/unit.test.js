@@ -220,3 +220,16 @@ test('billing: account state labels', () => {
   assert.equal(accountState({ account: { plan: 'x' } }, { openBalance: 100 }), 'due');
   assert.equal(accountState({ account: {} }), 'no_plan');
 });
+
+test('Google review link: Place IDs, placeholders and the fallback', async () => {
+  const { normalizeReviewLink, usableReviewLink, googleReviewTarget } = await import('../src/utils/review-link.js');
+  assert.equal(normalizeReviewLink(' ChIJN1t_tDeuEmsRUsoyG83frY4 '), 'https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4');
+  assert.equal(normalizeReviewLink('g.page/r/CabcXYZ/review'), 'https://g.page/r/CabcXYZ/review');
+  assert.equal(normalizeReviewLink('https://g.page/r/CabcXYZ/review'), 'https://g.page/r/CabcXYZ/review');
+  assert.equal(normalizeReviewLink(''), '');
+  assert.equal(usableReviewLink('https://search.google.com/local/writereview?placeid=DEMO_PLACE_ID'), '');
+  assert.deepEqual(googleReviewTarget({ name: 'Glow', reviewLink: 'https://g.page/r/x/review' }), { url: 'https://g.page/r/x/review', exact: true });
+  const fb = googleReviewTarget({ name: 'Glow Studio', address: { city: 'Noida' }, reviewLink: '' });
+  assert.equal(fb.exact, false);
+  assert.equal(fb.url, 'https://www.google.com/search?q=Glow%20Studio%20Noida%20reviews');
+});

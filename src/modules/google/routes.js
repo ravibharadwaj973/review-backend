@@ -6,6 +6,7 @@ import { requireAuth, requireBusiness } from '../../middleware/auth.js';
 import { ah, parse, badRequest, HttpError } from '../../utils/http.js';
 import { GoogleAccount, Location, Service, Photo, Review, Business, User } from '../../models/index.js';
 import * as google from './client.js';
+import { usableReviewLink } from '../../utils/review-link.js';
 import * as sync from './sync.js';
 import { demoReviews, demoNewReview } from './demo.js';
 import { ingestReviews, processNewReviews } from '../reviews/service.js';
@@ -207,8 +208,11 @@ async function selectLocation(business, account, loc) {
       country: a.regionCode || 'IN',
     };
   }
-  if (loc.newReviewUri) business.reviewLink = loc.newReviewUri;
-  else if (loc.placeId) business.reviewLink = `https://search.google.com/local/writereview?placeid=${loc.placeId}`;
+  // Fill the review link from Google only when the owner hasn't saved one. Never overwrite or clear it.
+  if (!usableReviewLink(business.reviewLink)) {
+    if (loc.newReviewUri) business.reviewLink = loc.newReviewUri;
+    else if (loc.placeId) business.reviewLink = `https://search.google.com/local/writereview?placeid=${loc.placeId}`;
+  }
   business.onboarding.google = true;
   await business.save();
 
@@ -278,7 +282,7 @@ googleRouter.post(
       { business: business._id, title: business.name, isPrimary: true, address: [business.address?.line1, business.address?.city].filter(Boolean).join(', '), google: { accountName: 'accounts/demo', locationName: 'locations/demo' }, lastSyncedAt: new Date() },
       { upsert: true, new: true }
     );
-    if (!business.reviewLink) business.reviewLink = 'https://search.google.com/local/writereview?placeid=DEMO_PLACE_ID';
+    // The demo never touches the review link: customers must keep reaching the real Google page
     business.onboarding.google = true;
     await business.save();
 

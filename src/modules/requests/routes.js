@@ -6,6 +6,7 @@ import { ReviewRequest, Customer, Service } from '../../models/index.js';
 import { randomToken } from '../../utils/crypto.js';
 import { env } from '../../config/env.js';
 import { generateRequestMessage, suggestTopics } from '../ai/service.js';
+import { usableReviewLink } from '../../utils/review-link.js';
 
 export const requestsRouter = Router();
 requestsRouter.use(requireAuth, requireBusiness);
@@ -59,7 +60,7 @@ requestsRouter.post('/', ah(async (req, res) => {
   const service = body.serviceId ? await Service.findOne({ _id: body.serviceId, business: req.business._id }) : null;
   const lastVisit = customer.visits?.at(-1);
   const serviceName = service?.name || lastVisit?.serviceName || '';
-  if (!req.business.reviewLink) throw badRequest('Add your Google review link first (connect Google or set it in Settings)');
+  if (!usableReviewLink(req.business.reviewLink)) throw badRequest('Add your Google review link first in Settings → Google review link (or connect Google)');
 
   const token = randomToken(9);
   const link = trackingLink(token);

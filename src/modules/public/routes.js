@@ -7,6 +7,7 @@ import { composeCustomerReview } from '../ai/service.js';
 import { Review } from '../../models/index.js';
 import { processNewReviews } from '../reviews/service.js';
 import { randomToken } from '../../utils/crypto.js';
+import { googleReviewTarget } from '../../utils/review-link.js';
 
 /**
  * Public, no-auth endpoints customers use:
@@ -25,7 +26,9 @@ async function pageData(business, { firstName = '', serviceName = '', topics = [
     firstName,
     serviceName,
     topics,
-    hasReviewLink: Boolean(business.reviewLink),
+    // The "Post on Google" button is always shown. exactGoogleLink = it opens the business's own review form.
+    hasReviewLink: true,
+    exactGoogleLink: googleReviewTarget(business).exact,
     // Everything the business offers, so the customer can tick what they actually took
     services: services.map((s) => ({ name: s.name, category: s.category })),
     staff: (business.staff || []).map((s) => s.name).filter(Boolean),
@@ -75,15 +78,15 @@ publicRouter.get('/r/:token', ah(async (req, res) => {
 publicRouter.get('/r/:token/go', ah(async (req, res) => {
   const request = await ReviewRequest.findOne({ token: req.params.token });
   if (!request) throw notFound('Link');
-  const business = await Business.findById(request.business).select('reviewLink').lean();
+  const business = await Business.findById(request.business).select('name reviewLink address.city').lean();
+  if (!business) throw notFound('Link');
   request.clicks = (request.clicks || 0) + 1;
   request.clickedAt = request.clickedAt || new Date();
   if (['draft', 'sent', 'scheduled'].includes(request.status)) request.status = 'clicked';
   if (!request.sentAt) request.sentAt = new Date();
   await request.save();
   await Customer.updateOne({ _id: request.customer, reviewStatus: { $in: ['none', 'requested'] } }, { reviewStatus: 'clicked' });
-  if (!business?.reviewLink) throw notFound('Review link');
-  res.redirect(302, business.reviewLink);
+  res.redirect(302, googleReviewTarget(business).url);
 }));
 
 /**
@@ -119,8 +122,7 @@ publicRouter.get('/b/:slug', ah(async (req, res) => {
 publicRouter.get('/b/:slug/go', ah(async (req, res) => {
   const business = await bySlug(req.params.slug);
   await Business.updateOne({ _id: business._id }, { $inc: { 'qrStats.clicks': 1 } });
-  if (!business.reviewLink) throw notFound('Review link');
-  res.redirect(302, business.reviewLink);
+  res.redirect(302, googleReviewTarget(business).url);
 }));
 
 publicRouter.post('/b/:slug/compose', composeLimiter, ah(async (req, res) => {
@@ -185,7 +187,7 @@ publicRouter.post('/r/:token/submit', submitLimiter, ah(async (req, res) => {
   request.attribution = 'direct';
   await request.save();
   if (request.customer) await Customer.updateOne({ _id: request.customer._id }, { reviewStatus: 'reviewed', googleReview: review._id });
-  res.status(201).json({ ok: true, hasReviewLink: Boolean(business.reviewLink) });
+  res.status(201).json({ ok: true, hasReviewLink: true });
 }));
 
 publicRouter.post('/b/:slug/submit', submitLimiter, ah(async (req, res) => {
@@ -193,5 +195,5 @@ publicRouter.post('/b/:slug/submit', submitLimiter, ah(async (req, res) => {
   const business = await bySlug(req.params.slug);
   await saveDirectReview({ business, body, via: 'qr' });
   await Business.updateOne({ _id: business._id }, { $inc: { 'qrStats.submitted': 1 } });
-  res.status(201).json({ ok: true, hasReviewLink: Boolean(business.reviewLink) });
+  res.status(201).json({ ok: true, hasReviewLink: true });
 }));

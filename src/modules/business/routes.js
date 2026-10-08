@@ -1,19 +1,27 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireBusiness } from '../../middleware/auth.js';
-import { ah, parse } from '../../utils/http.js';
+import { ah, parse, badRequest } from '../../utils/http.js';
 import { Location, Business } from '../../models/index.js';
 import { env } from '../../config/env.js';
 import { conflict } from '../../utils/http.js';
 import { GoogleAccount } from '../../models/index.js';
 import { pushProfile } from '../google/sync.js';
 import { holidayPlan, activeSeason } from '../hours/service.js';
+import { normalizeReviewLink, usableReviewLink, isPlaceholderLink } from '../../utils/review-link.js';
 
 export const businessRouter = Router();
 businessRouter.use(requireAuth, requireBusiness);
 
 const time = z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM');
 const url = z.union([z.literal(''), z.string().trim().url('Enter a full URL starting with https://')]);
+
+// Google review link: a full link, or a Google Place ID (starts with ChI…)
+const reviewLinkField = z
+  .string()
+  .max(600)
+  .transform(normalizeReviewLink)
+  .refine((v) => v === '' || /^https?:\/\/[^\s]+\.[^\s]+/.test(v), 'Paste the full link from Google (starting with https://) or your Place ID');
 
 const weekHours = z.array(z.object({ day: z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']), open: time, close: time, closed: z.boolean() })).length(7);
 
@@ -62,7 +70,7 @@ const businessSchema = z
       replyDelayMinutes: z.number().int().min(0).max(1440).optional(),
       syncHoursToGoogle: z.boolean().optional(),
     }),
-    reviewLink: url,
+    reviewLink: reviewLinkField,
   })
   .partial();
 
@@ -76,6 +84,11 @@ businessRouter.patch(
   ah(async (req, res) => {
     const body = parse(businessSchema, req.body);
     const b = req.business;
+    // The review link is never removed once set — it can only be replaced by another link
+    if ('reviewLink' in body && !body.reviewLink) {
+      if (usableReviewLink(b.reviewLink)) throw badRequest('Your Google review link can’t be removed. Paste a new link to change it.');
+      delete body.reviewLink;
+    }
     for (const [key, value] of Object.entries(body)) {
       if (['address', 'links', 'voice', 'automation'].includes(key)) {
         b.set(key, { ...(b.get(key)?.toObject?.() || b.get(key) || {}), ...value });
@@ -112,7 +125,8 @@ businessRouter.get('/share', ah(async (req, res) => {
   res.json({
     slug,
     url: `${env.appUrl}/b/${slug}`,
-    reviewLink: req.business.reviewLink,
+    reviewLink: usableReviewLink(req.business.reviewLink),
+    placeholderLink: isPlaceholderLink(req.business.reviewLink),
     stats: { opens: 0, composed: 0, clicks: 0, submitted: 0, ...(req.business.qrStats?.toObject?.() || req.business.qrStats || {}) },
   });
 }));
