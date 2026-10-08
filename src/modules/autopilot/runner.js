@@ -4,6 +4,7 @@ import { planPhotos, postDuePhotos } from '../photos/schedule.js';
 import { planPosts, publishDuePosts } from '../posts/service.js';
 import { effectiveHours, hoursSignature } from '../hours/service.js';
 import { pushProfile } from '../google/sync.js';
+import { runBilling } from '../billing/service.js';
 
 /**
  * Switches Google's weekly hours when a seasonal schedule starts or ends.
@@ -61,7 +62,9 @@ export async function runAutopilotAll() {
       console.warn('[autopilot] replies failed:', err.message);
       return 0;
     });
-    const businesses = await Business.find({});
+    await runBilling().catch((err) => console.warn('[billing] failed:', err.message));
+    // Paused accounts get no automatic work
+    const businesses = await Business.find({ 'account.status': { $ne: 'suspended' } });
     let photos = 0;
     let posts = 0;
     for (const b of businesses) {

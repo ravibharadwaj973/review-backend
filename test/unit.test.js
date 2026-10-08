@@ -194,3 +194,29 @@ test('offer posts carry an event schedule and offer details for Google', () => {
   assert.equal(body.offer.couponCode, 'SPA10');
   assert.deepEqual(body.callToAction, { actionType: 'CALL' });
 });
+
+/* ------------------------------------------------------------------ billing */
+
+const { discountFor, listPrice, addMonths, accountState } = await import('../src/modules/billing/service.js');
+
+test('billing: price, percent and flat discounts', () => {
+  assert.equal(listPrice({ price: 1500 }, { price: 2499 }), 1500); // own price wins
+  assert.equal(listPrice({}, { price: 2499 }), 2499);
+  assert.equal(discountFor({ discountType: 'percent', discountValue: 10 }, 2499), 249.9);
+  assert.equal(discountFor({ discountType: 'flat', discountValue: 5000 }, 2499), 2499); // never below zero
+  assert.equal(discountFor({ discountType: 'none', discountValue: 50 }, 1000), 0);
+});
+
+test('billing: month periods handle short months', () => {
+  assert.equal(addMonths(new Date(2027, 0, 31), 1).getDate(), 28);
+  assert.equal(addMonths(new Date(2026, 9, 7), 12).getFullYear(), 2027);
+});
+
+test('billing: account state labels', () => {
+  const future = new Date(Date.now() + 5 * 864e5);
+  assert.equal(accountState({ account: { status: 'suspended' } }), 'suspended');
+  assert.equal(accountState({ account: { trialEndsAt: future } }), 'trial');
+  assert.equal(accountState({ account: { plan: 'x' } }, { openBalance: 100, overdue: true }), 'overdue');
+  assert.equal(accountState({ account: { plan: 'x' } }, { openBalance: 100 }), 'due');
+  assert.equal(accountState({ account: {} }), 'no_plan');
+});

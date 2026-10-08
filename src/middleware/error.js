@@ -9,7 +9,7 @@ export function notFoundHandler(req, res) {
 // eslint-disable-next-line no-unused-vars
 export function errorHandler(err, req, res, _next) {
   if (err instanceof HttpError) {
-    return res.status(err.status).json({ error: err.message, details: err.details });
+    return res.status(err.status).json({ error: err.message, details: err.details, code: err.code });
   }
   if (err instanceof mongoose.Error.ValidationError) {
     const details = Object.fromEntries(Object.entries(err.errors).map(([k, v]) => [k, v.message]));

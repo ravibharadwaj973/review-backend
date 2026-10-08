@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Starling — AI review & reputation platform API",
+  "description": "Starling \u2014 AI review & reputation platform API",
   "main": "src/server.js",
   "engines": {
     "node": ">=20"
@@ -15,7 +15,9 @@
     "seed": "node scripts/seed.js",
     "test": "node --test test/unit.test.js",
     "setup": "npm --prefix .. run setup",
-    "dev:all": "npm --prefix .. run dev"
+    "dev:all": "npm --prefix .. run dev",
+    "make-admin": "node scripts/make-admin.js",
+    "create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

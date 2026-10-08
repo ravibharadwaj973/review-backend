@@ -34,6 +34,8 @@ const publicFrontend = frontendUrls.find((u) => !u.includes('*')) || 'http://loc
 
 export const env = {
   isProd,
+  // Platform admins (comma separated). They see the /admin section.
+  adminEmails: String(process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
   port: Number(process.env.PORT || 4000),
   frontendUrls,
   appUrl: publicFrontend,
@@ -41,7 +43,7 @@ export const env = {
   // Public base URL Google can reach to fetch photos (must be https + publicly reachable)
   publicAssetUrl: (process.env.PUBLIC_ASSET_URL || publicFrontend).replace(/\/$/, ''),
   // Websites allowed to call the API from the browser
-  corsOrigins: [...new Set([...frontendUrls, ...urlList(process.env.CORS_ORIGINS), ...devOrigins])],
+  corsOrigins: [...new Set([...frontendUrls, ...urlList(process.env.ADMIN_URL), ...urlList(process.env.CORS_ORIGINS), ...devOrigins, ...(isProd ? [] : ['http://localhost:3001'])])],
 
   mongoUri: process.env.MONGODB_URI || process.env.MONGO_URI || process.env.MONGO_URL || '',
   embeddedMongoPath: process.env.EMBEDDED_MONGO_PATH || '.data/db',

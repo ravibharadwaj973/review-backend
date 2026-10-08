@@ -1,10 +1,11 @@
 import { ZodError } from 'zod';
 
 export class HttpError extends Error {
-  constructor(status, message, details) {
+  constructor(status, message, details, code) {
     super(message);
     this.status = status;
     this.details = details;
+    if (code) this.code = code;
   }
 }
 

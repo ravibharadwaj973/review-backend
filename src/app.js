@@ -20,6 +20,8 @@ import { publicRouter } from './modules/public/routes.js';
 import { postsRouter } from './modules/posts/routes.js';
 import { questionsRouter } from './modules/questions/routes.js';
 import { autopilotRouter } from './modules/autopilot/routes.js';
+import { adminRouter } from './modules/admin/routes.js';
+import { billingRouter } from './modules/billing/routes.js';
 
 export function createApp() {
   const app = express();
@@ -68,6 +70,8 @@ export function createApp() {
   app.use('/api/posts', postsRouter);
   app.use('/api/questions', questionsRouter);
   app.use('/api/autopilot', autopilotRouter);
+  app.use('/api/billing', billingRouter);
+  app.use('/api/admin', adminRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

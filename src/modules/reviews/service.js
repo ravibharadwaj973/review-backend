@@ -256,6 +256,7 @@ export async function publishDueReplies({ limit = 25, businessId } = {}) {
   let published = 0;
   for (const draft of due) {
     const [review, business] = await Promise.all([Review.findById(draft.review), Business.findById(draft.business)]);
+    if (business?.account?.status === 'suspended') continue; // waits until the account is active again
     if (!review || !business || review.status === 'answered') {
       draft.status = 'discarded';
       draft.autoPublishAt = undefined;

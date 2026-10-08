@@ -135,6 +135,22 @@ const businessSchema = new mongoose.Schema(
       submitted: { type: Number, default: 0 }, // reviews submitted in Starling
       lastOpenAt: Date,
     },
+    // Managed by platform admins: access, plan, price and payments
+    account: {
+      status: { type: String, enum: ['active', 'suspended'], default: 'active', index: true },
+      suspendedReason: String,
+      suspendedAt: Date,
+      suspendedBy: { type: String, enum: ['admin', 'system'] },
+      plan: { type: mongoose.Schema.Types.ObjectId, ref: 'Plan' },
+      price: { type: Number, min: 0 }, // custom price per billing cycle; empty = the plan's price
+      discountType: { type: String, enum: ['none', 'percent', 'flat'], default: 'none' },
+      discountValue: { type: Number, default: 0, min: 0 },
+      billingCycle: { type: String, enum: ['monthly', 'quarterly', 'half_yearly', 'yearly'], default: 'monthly' },
+      trialEndsAt: Date,
+      paidUntil: Date,
+      autoInvoice: { type: Boolean, default: true }, // create the next bill by itself before each period
+    },
+    adminNotes: { type: String, default: '', select: false }, // admin-only notes, never sent to the business
     onboarding: {
       profile: { type: Boolean, default: false },
       services: { type: Boolean, default: false },

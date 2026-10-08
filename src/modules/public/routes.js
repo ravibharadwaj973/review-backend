@@ -34,7 +34,8 @@ async function pageData(business, { firstName = '', serviceName = '', topics = [
   };
 }
 
-const BUSINESS_FIELDS = 'name category logoUrl reviewLink address.city staff slug';
+const BUSINESS_FIELDS = 'name category logoUrl reviewLink address.city staff slug account.status';
+const PAUSED = () => new HttpError(404, 'This page isn’t available right now.');
 
 const composeSchema = z.object({
   rating: z.number().int().min(1).max(5),
@@ -62,6 +63,7 @@ publicRouter.get('/r/:token', ah(async (req, res) => {
   if (!request) throw notFound('Link');
   const business = await Business.findById(request.business).select(BUSINESS_FIELDS).lean();
   if (!business) throw notFound('Link');
+  if (business.account?.status === 'suspended') throw PAUSED();
   if (!request.openedAt) {
     request.openedAt = new Date();
     await request.save();
@@ -104,6 +106,7 @@ publicRouter.post('/r/:token/compose', composeLimiter, ah(async (req, res) => {
 async function bySlug(slug) {
   const business = await Business.findOne({ slug: String(slug).toLowerCase() }).select(BUSINESS_FIELDS);
   if (!business) throw notFound('Business');
+  if (business.account?.status === 'suspended') throw PAUSED();
   return business;
 }
 

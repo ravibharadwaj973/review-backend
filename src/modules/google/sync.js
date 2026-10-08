@@ -234,7 +234,7 @@ export async function syncAllBusinesses() {
   let created = 0;
   for (const acc of accounts) {
     const business = await Business.findById(acc.business);
-    if (!business) continue;
+    if (!business || business.account?.status === 'suspended') continue;
     try {
       const res = await syncReviews(business);
       created += res.created || 0;

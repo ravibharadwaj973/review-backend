@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { User, Business } from '../../models/index.js';
+import { User, Business, Setting } from '../../models/index.js';
 import { requireAuth, signToken } from '../../middleware/auth.js';
 import { ah, parse, conflict, unauthorized } from '../../utils/http.js';
 
@@ -27,7 +27,11 @@ authRouter.post(
     const user = new User({ name: body.name, email: body.email });
     await user.setPassword(body.password);
     await user.save();
-    const business = await Business.create({ owner: user._id, name: body.businessName, category: body.category || 'Salon' });
+    const settings = await Setting.get();
+    const business = await Business.create({
+      owner: user._id, name: body.businessName, category: body.category || 'Salon',
+      account: { status: 'active', trialEndsAt: settings.defaultTrialDays ? new Date(Date.now() + settings.defaultTrialDays * 864e5) : undefined },
+    });
     await business.ensureSlug();
     res.status(201).json({ token: signToken(user), user, business });
   })
@@ -52,7 +56,7 @@ authRouter.get(
   requireAuth,
   ah(async (req, res) => {
     const business = await Business.findOne({ owner: req.user._id });
-    res.json({ user: req.user, business });
+    res.json({ user: req.user, business, impersonatedBy: req.impersonatedBy ? { id: req.impersonatedBy._id, name: req.impersonatedBy.name } : null });
   })
 );
 
