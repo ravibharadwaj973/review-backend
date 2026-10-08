@@ -73,6 +73,24 @@ export async function ensureAccessToken(account) {
   }
 }
 
+/** Turns Google's common setup errors into plain advice. */
+function explainGoogleError(status, data) {
+  const msg = data?.error?.message || `Google API error ${status}`;
+  const reason = JSON.stringify(data?.error?.details || '') + msg;
+  if (status === 429 && /quota|rate/i.test(reason)) {
+    return /limit.*\b0\b|quota.*0|Quota exceeded for quota metric/i.test(reason)
+      ? 'Google hasn’t given your Cloud project Business Profile API access yet (quota is 0). Submit the GBP API access request and wait for approval.'
+      : 'Google is limiting requests right now. Try again in a minute.';
+  }
+  if (status === 403 && /SERVICE_DISABLED|has not been used|is disabled|accessNotConfigured/i.test(reason)) {
+    return 'A Business Profile API isn’t enabled in your Google Cloud project. Enable “My Business Account Management API”, “My Business Business Information API” and “Google My Business API”, then try again.';
+  }
+  if (status === 403 && /PERMISSION_DENIED|insufficient|scope/i.test(reason)) {
+    return 'Google says this account can’t manage that Business Profile. Sign in with the Google account that owns or manages it.';
+  }
+  return msg;
+}
+
 async function call(account, url, { method = 'GET', body } = {}) {
   const token = await ensureAccessToken(account);
   const res = await fetch(url, {
@@ -83,8 +101,7 @@ async function call(account, url, { method = 'GET', body } = {}) {
   if (res.status === 204) return {};
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.error?.message || `Google API error ${res.status}`;
-    const err = new HttpError(res.status === 401 ? 401 : 502, msg);
+    const err = new HttpError(res.status === 401 ? 401 : 502, explainGoogleError(res.status, data));
     err.googleStatus = res.status;
     throw err;
   }
@@ -93,9 +110,22 @@ async function call(account, url, { method = 'GET', body } = {}) {
 
 // ---- Accounts & locations -------------------------------------------------
 
-export async function listAccounts(account) {
-  const data = await call(account, `${ACCOUNT_API}/accounts?pageSize=20`);
-  return data.accounts || [];
+/** Follows nextPageToken until every page is read (with a safety limit). */
+async function allPages(account, baseUrl, key, maxPages = 20) {
+  const out = [];
+  let pageToken = '';
+  for (let i = 0; i < maxPages; i += 1) {
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    const data = await call(account, `${baseUrl}${pageToken ? `${sep}pageToken=${encodeURIComponent(pageToken)}` : ''}`);
+    out.push(...(data[key] || []));
+    if (!data.nextPageToken) break;
+    pageToken = data.nextPageToken;
+  }
+  return out;
+}
+
+export function listAccounts(account) {
+  return allPages(account, `${ACCOUNT_API}/accounts?pageSize=20`, 'accounts');
 }
 
 const LOCATION_READ_MASK = [
@@ -103,9 +133,8 @@ const LOCATION_READ_MASK = [
   'regularHours', 'specialHours', 'profile', 'metadata', 'serviceItems',
 ].join(',');
 
-export async function listLocations(account, accountName) {
-  const data = await call(account, `${INFO_API}/${accountName}/locations?pageSize=100&readMask=${LOCATION_READ_MASK}`);
-  return data.locations || [];
+export function listLocations(account, accountName) {
+  return allPages(account, `${INFO_API}/${accountName}/locations?pageSize=100&readMask=${LOCATION_READ_MASK}`, 'locations');
 }
 
 export function getLocation(account, locationName) {
@@ -186,7 +215,7 @@ const toTime = (hhmm) => {
   const [hours, minutes] = String(hhmm || '00:00').split(':').map(Number);
   return { hours, minutes };
 };
-const fromTime = (t = {}) => `${String(t.hours ?? 0).padStart(2, '0')}:${String(t.minutes ?? 0).padStart(2, '0')}`;
+const fromTime = (t = {}) => `${String((t.hours ?? 0) % 24).padStart(2, '0')}:${String(t.minutes ?? 0).padStart(2, '0')}`; // 24:00 → 00:00
 
 export function hoursToGoogle(hours = []) {
   return {
@@ -194,7 +223,14 @@ export function hoursToGoogle(hours = []) {
       .filter((h) => !h.closed)
       .map((h) => {
         const day = h.day.toUpperCase();
-        return { openDay: day, openTime: toTime(h.open), closeDay: day, closeTime: toTime(h.close) };
+        // Open past midnight (e.g. 18:00–02:00): Google expects the closing day to be the next day
+        const overnight = h.close <= h.open && h.close !== '00:00';
+        const nextDay = DAY_ENUM[(DAY_ENUM.indexOf(day) + 1) % 7];
+        if (h.open === '00:00' && (h.close === '00:00' || h.close === '23:59')) {
+          return { openDay: day, openTime: toTime('00:00'), closeDay: day, closeTime: { hours: 24, minutes: 0 } }; // open 24 hours
+        }
+        if (h.close === '00:00') return { openDay: day, openTime: toTime(h.open), closeDay: day, closeTime: { hours: 24, minutes: 0 } };
+        return { openDay: day, openTime: toTime(h.open), closeDay: overnight ? nextDay : day, closeTime: toTime(h.close) };
       }),
   };
 }

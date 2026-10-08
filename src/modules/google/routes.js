@@ -27,7 +27,17 @@ googleRouter.get(
     const business = await Business.findById(state.bid);
     if (!business) return back({ error: 'Business not found' });
 
-    const tokens = await google.exchangeCode(String(req.query.code || ''));
+    let tokens;
+    try {
+      tokens = await google.exchangeCode(String(req.query.code || ''));
+    } catch (err) {
+      // Usually a redirect URI mismatch or a wrong client secret on the server
+      return back({ error: `Google sign-in failed: ${err.message}. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI.` });
+    }
+    if (!tokens.refresh_token) {
+      const existing = await GoogleAccount.findOne({ business: business._id, mode: 'live' }).select('+refreshTokenEnc');
+      if (!existing?.refreshTokenEnc) return back({ error: 'Google didn’t give long-term access. Remove Starling at myaccount.google.com/permissions and connect again.' });
+    }
     let account = await GoogleAccount.findOne({ business: business._id }).select('+accessTokenEnc +refreshTokenEnc');
     if (account && account.mode === 'demo') {
       // Replace demo data with the real profile

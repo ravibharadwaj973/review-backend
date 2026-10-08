@@ -63,6 +63,12 @@ export function createApp() {
   app.use('/api/customers', customersRouter);
   app.use('/api/photos', photosRouter);
   app.use('/api/google', googleRouter);
+  // Same Google sign-in callback under a second address, for Google Cloud setups that use it:
+  //   https://<api>/api/auth/google/callback  ==  https://<api>/api/google/oauth/callback
+  app.get('/api/auth/google/callback', (req, res, next) => {
+    req.url = req.url.replace(/^\/api\/auth\/google\/callback/, '/oauth/callback');
+    googleRouter(req, res, next);
+  });
   app.use('/api/reviews', reviewsRouter);
   app.use('/api/requests', requestsRouter);
   app.use('/api/ai', aiRouter);
