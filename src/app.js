@@ -52,6 +52,7 @@ export function createApp() {
       ai: groqConfigured() ? 'groq' : 'fallback',
       google: googleConfigured() ? 'configured' : 'not_configured',
       frontend: env.appUrl,
+      admin: env.adminUrl || null,
       time: new Date().toISOString(),
     });
   });

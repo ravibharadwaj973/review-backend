@@ -32,6 +32,13 @@ const frontendUrls = urlList(process.env.FRONTEND_URL || process.env.APP_URL || 
 const devOrigins = isProd ? [] : ['http://localhost:3000', 'http://127.0.0.1:3000'];
 const publicFrontend = frontendUrls.find((u) => !u.includes('*')) || 'http://localhost:3000';
 
+/**
+ * ADMIN_URL is the address of the separate admin website, e.g. https://admin.jharavi.in
+ * (comma separate several). It is allowed to call the API, and it is where
+ * "Back to admin" returns to after an admin opens a business.
+ */
+const adminUrls = urlList(process.env.ADMIN_URL || (isProd ? '' : 'http://localhost:3001'));
+
 export const env = {
   isProd,
   // Platform admins (comma separated). They see the /admin section.
@@ -49,7 +56,9 @@ export const env = {
   // Public base URL Google can reach to fetch photos (must be https + publicly reachable)
   publicAssetUrl: (process.env.PUBLIC_ASSET_URL || publicFrontend).replace(/\/$/, ''),
   // Websites allowed to call the API from the browser
-  corsOrigins: [...new Set([...frontendUrls, ...urlList(process.env.ADMIN_URL), ...urlList(process.env.CORS_ORIGINS), ...devOrigins, ...(isProd ? [] : ['http://localhost:3001'])])],
+  adminUrls,
+  adminUrl: adminUrls.find((u) => !u.includes('*')) || '',
+  corsOrigins: [...new Set([...frontendUrls, ...adminUrls, ...urlList(process.env.CORS_ORIGINS), ...devOrigins])],
 
   mongoUri: process.env.MONGODB_URI || process.env.MONGO_URI || process.env.MONGO_URL || '',
   embeddedMongoPath: process.env.EMBEDDED_MONGO_PATH || '.data/db',
@@ -91,13 +100,26 @@ export const env = {
 export const googleConfigured = () => Boolean(env.google.clientId && env.google.clientSecret);
 export const groqConfigured = () => Boolean(env.groq.apiKey);
 
-/** True when a browser Origin is allowed by FRONTEND_URL / CORS_ORIGINS (supports * wildcards). */
-export function isAllowedOrigin(origin) {
-  if (!origin) return true; // server-to-server, curl, the Vercel proxy
+const originMatches = (list, origin) => {
   const o = origin.replace(/\/+$/, '');
-  return env.corsOrigins.some((allowed) => {
+  return list.some((allowed) => {
     if (!allowed.includes('*')) return allowed === o;
     const rx = new RegExp(`^${allowed.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9-]+')}$`, 'i');
     return rx.test(o);
   });
+};
+
+/** True when a browser Origin is allowed by FRONTEND_URL / ADMIN_URL / CORS_ORIGINS (supports * wildcards). */
+export function isAllowedOrigin(origin) {
+  if (!origin) return true; // server-to-server, curl, the Vercel proxy
+  return originMatches(env.corsOrigins, origin);
+}
+
+/** True when a full URL belongs to the admin website in ADMIN_URL. */
+export function isAdminUrl(url) {
+  try {
+    return originMatches(env.adminUrls, new URL(url).origin);
+  } catch {
+    return false;
+  }
 }

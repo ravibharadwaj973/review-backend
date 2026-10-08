@@ -7,7 +7,7 @@ import {
   Business, User, GoogleAccount, Review, AiResponse, ReviewRequest, Photo, Post, Customer, Service, Location, Question,
   Plan, Invoice, Payment, AdminLog, Setting, CYCLES, PAYMENT_METHODS,
 } from '../../models/index.js';
-import { env, googleConfigured } from '../../config/env.js';
+import { env, googleConfigured, isAdminUrl } from '../../config/env.js';
 import { syncReviews, refreshRemoteSnapshot, loadAccount } from '../google/sync.js';
 import {
   accountState, allocatePayment, billingSummary, createInvoice, invoiceDocument, invoiceNextPeriod, log, recalcInvoice, refreshAccount, addMonths,
@@ -269,7 +269,9 @@ adminRouter.post('/accounts/:id/impersonate', ah(async (req, res) => {
   if (!owner) throw notFound('Owner');
   await log(req.user._id, b._id, 'account.opened_as_owner', {});
   const token = signToken(owner, { impersonatedBy: req.user._id });
-  const back = body.returnUrl && /^https?:\/\//.test(body.returnUrl) ? `&back=${encodeURIComponent(body.returnUrl)}` : '';
+  // "Back to admin" only ever goes to the admin website from ADMIN_URL (no open redirects)
+  const backUrl = body.returnUrl && isAdminUrl(body.returnUrl) ? body.returnUrl : env.adminUrl;
+  const back = backUrl ? `&back=${encodeURIComponent(backUrl)}` : '';
   res.json({ token, url: `${env.appUrl}/impersonate#token=${encodeURIComponent(token)}${back}`, business: { name: b.name } });
 }));
 

@@ -11,6 +11,7 @@ async function main() {
   const server = app.listen(env.port, () => {
     console.log(`[api] Starling API listening on http://localhost:${env.port}`);
     console.log(`[api] Frontend: ${env.appUrl}  (allowed origins: ${env.corsOrigins.join(', ')})`);
+    console.log(`[api] Admin site: ${env.adminUrl || 'not set — add ADMIN_URL to .env (e.g. https://admin.yourdomain.in)'}`);
     if (env.isProd && /localhost|127\.0\.0\.1/.test(env.appUrl)) {
       console.warn('[api] FRONTEND_URL is still localhost — set it to your website address so links and QR codes work.');
     }
