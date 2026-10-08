@@ -19,6 +19,11 @@ export async function chat(opts, attempt = 0) {
     if (err.modelMissing && attempt === 0 && (await resolveReplacementModel(opts.fast))) {
       return chat(opts, 1);
     }
+    // JSON mode can fail (e.g. the model ran out of room while thinking). Try once more without
+    // strict JSON mode and with more room; chatJSON still pulls the JSON out of the reply.
+    if (err.jsonFailed && opts.json && !opts.relaxed) {
+      return chat({ ...opts, json: false, relaxed: true, maxTokens: (opts.maxTokens || 700) * 2 }, attempt);
+    }
     throw err;
   }
 }
@@ -26,9 +31,23 @@ export async function chat(opts, attempt = 0) {
 // Runtime overrides when a configured model has been retired
 const override = { main: null, fast: null };
 const PREFERRED = {
-  main: ['llama-3.3-70b', 'openai/gpt-oss-120b', 'llama-4', 'qwen', 'gpt-oss', 'llama'],
-  fast: ['llama-3.1-8b', 'openai/gpt-oss-20b', 'llama-4-scout', 'gemma', 'llama'],
+  main: ['openai/gpt-oss-120b', 'qwen3.8', 'gpt-oss', 'qwen', 'llama'],
+  fast: ['openai/gpt-oss-20b', 'gpt-oss', 'qwen', 'llama'],
 };
+
+/**
+ * Reasoning models (gpt-oss, qwen) think before answering, and that thinking uses the same
+ * token budget as the answer. Keep the thinking short, hide it, and leave room for the answer.
+ */
+function modelOptions(model, maxTokens) {
+  if (/gpt-oss/i.test(model)) {
+    return { reasoning_effort: 'low', include_reasoning: false, max_completion_tokens: maxTokens + 2048 };
+  }
+  if (/qwen/i.test(model)) {
+    return { reasoning_format: 'hidden', max_completion_tokens: maxTokens + 2048 };
+  }
+  return { max_tokens: maxTokens };
+}
 
 async function resolveReplacementModel(fast) {
   try {
@@ -52,16 +71,16 @@ async function resolveReplacementModel(fast) {
   return false;
 }
 
-async function chatOnce({ system, user, json = false, temperature = 0.5, maxTokens = 700, fast = false }) {
+async function chatOnce({ system, user, json = false, relaxed = false, temperature = 0.5, maxTokens = 700, fast = false }) {
   if (!groqConfigured()) throw new AiUnavailableError('GROQ_API_KEY is not set');
   const model = fast ? override.fast || env.groq.fastModel : override.main || env.groq.model;
 
   const body = {
     model,
     temperature,
-    max_tokens: maxTokens,
+    ...modelOptions(model, maxTokens),
     messages: [
-      { role: 'system', content: system },
+      { role: 'system', content: relaxed ? `${system}\nReply with only the JSON object — no other text.` : system },
       { role: 'user', content: user },
     ],
   };
@@ -88,21 +107,34 @@ async function chatOnce({ system, user, json = false, temperature = 0.5, maxToke
     const error = new AiUnavailableError(`Groq returned ${res.status}: ${detail.slice(0, 300)}`);
     if (res.status === 429) error.retryAfterMs = Math.ceil(Number(res.headers.get('retry-after') || 2) * 1000);
     if ((res.status === 404 || res.status === 400) && /model/i.test(detail) && /(not exist|not found|decommission|deprecat|no longer)/i.test(detail)) error.modelMissing = true;
+    if (res.status === 400 && /json_validate_failed/.test(detail)) error.jsonFailed = true;
     throw error;
   }
   const data = await res.json();
   // Strip any <think> block some reasoning models emit
   const text = (data?.choices?.[0]?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  if (!text) {
+    const error = new AiUnavailableError('Groq returned an empty reply');
+    if (json) error.jsonFailed = true;
+    throw error;
+  }
   return { text, model: `groq:${data.model || model}` };
 }
 
 export async function chatJSON(opts) {
   const { text, model } = await chat({ ...opts, json: true });
+  const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, '');
   try {
-    return { data: JSON.parse(text), model };
+    return { data: JSON.parse(cleaned), model };
   } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) return { data: JSON.parse(match[0]), model };
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return { data: JSON.parse(match[0]), model };
+      } catch {
+        /* fall through */
+      }
+    }
     throw new AiUnavailableError('Groq returned invalid JSON');
   }
 }

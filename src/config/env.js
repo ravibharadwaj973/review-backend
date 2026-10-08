@@ -65,8 +65,9 @@ export const env = {
   groq: {
     // GROQ_URI is accepted as an alias because some setups store the key under that name
     apiKey: process.env.GROQ_API_KEY || process.env.GROQ_URI || '',
-    model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-    fastModel: process.env.GROQ_FAST_MODEL || 'llama-3.1-8b-instant',
+    // Groq retired the Llama 3.x models on 16 Aug 2026; gpt-oss is their recommended replacement
+    model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+    fastModel: process.env.GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
     baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
   },
 
