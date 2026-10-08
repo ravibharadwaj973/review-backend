@@ -2,9 +2,11 @@ import { env, googleConfigured, groqConfigured } from './config/env.js';
 import { connectDB, disconnectDB } from './config/db.js';
 import { createApp } from './app.js';
 import { startScheduler } from './jobs/scheduler.js';
+import { ensureAdminFromEnv } from './utils/admin-from-env.js';
 
 async function main() {
   await connectDB();
+  await ensureAdminFromEnv().catch((err) => console.warn('[admin] could not set up the admin login:', err.message));
   const app = createApp();
   const server = app.listen(env.port, () => {
     console.log(`[api] Starling API listening on http://localhost:${env.port}`);

@@ -35,7 +35,13 @@ const publicFrontend = frontendUrls.find((u) => !u.includes('*')) || 'http://loc
 export const env = {
   isProd,
   // Platform admins (comma separated). They see the /admin section.
-  adminEmails: String(process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+  adminEmails: [...new Set([...String(process.env.ADMIN_EMAILS || '').split(','), process.env.ADMIN_EMAIL || ''].map((e) => e.trim().toLowerCase()).filter(Boolean))],
+  // The main admin login, kept in sync from .env on every start (see utils/admin-from-env.js)
+  admin: {
+    email: String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(),
+    password: process.env.ADMIN_PASSWORD || '',
+    name: String(process.env.ADMIN_NAME || '').trim(),
+  },
   port: Number(process.env.PORT || 4000),
   frontendUrls,
   appUrl: publicFrontend,

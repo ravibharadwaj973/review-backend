@@ -3,7 +3,8 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { User, Business, Setting } from '../../models/index.js';
 import { requireAuth, signToken } from '../../middleware/auth.js';
-import { ah, parse, conflict, unauthorized } from '../../utils/http.js';
+import { env } from '../../config/env.js';
+import { ah, parse, conflict, unauthorized, forbidden } from '../../utils/http.js';
 
 export const authRouter = Router();
 
@@ -73,6 +74,10 @@ authRouter.patch(
       req.body
     );
     const user = await User.findById(req.user._id).select('+passwordHash');
+    // The .env admin's password comes from ADMIN_PASSWORD; a change here would be undone on the next restart
+    if (body.newPassword && env.admin.password && env.admin.email === user.email) {
+      throw forbidden('This admin password is set in the server’s .env file (ADMIN_PASSWORD). Change it there and restart the API.');
+    }
     if (body.name) user.name = body.name;
     if (body.newPassword) {
       if (!body.currentPassword || !(await user.checkPassword(body.currentPassword))) throw unauthorized('Current password is incorrect');
