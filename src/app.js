@@ -11,7 +11,7 @@ import { businessRouter } from './modules/business/routes.js';
 import { servicesRouter } from './modules/services/routes.js';
 import { customersRouter } from './modules/customers/routes.js';
 import { photosRouter } from './modules/photos/routes.js';
-import { googleRouter } from './modules/google/routes.js';
+import { googleRouter, googleAuthRouter } from './modules/google/routes.js';
 import { reviewsRouter } from './modules/reviews/routes.js';
 import { requestsRouter } from './modules/requests/routes.js';
 import { aiRouter } from './modules/ai/routes.js';
@@ -57,18 +57,14 @@ export function createApp() {
     });
   });
 
+  // Connect Google: GET /api/auth/google (start) and GET /api/auth/google/callback (Google returns here)
+  app.use('/api/auth/google', googleAuthRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/business', businessRouter);
   app.use('/api/services', servicesRouter);
   app.use('/api/customers', customersRouter);
   app.use('/api/photos', photosRouter);
   app.use('/api/google', googleRouter);
-  // Same Google sign-in callback under a second address, for Google Cloud setups that use it:
-  //   https://<api>/api/auth/google/callback  ==  https://<api>/api/google/oauth/callback
-  app.get('/api/auth/google/callback', (req, res, next) => {
-    req.url = req.url.replace(/^\/api\/auth\/google\/callback/, '/oauth/callback');
-    googleRouter(req, res, next);
-  });
   app.use('/api/reviews', reviewsRouter);
   app.use('/api/requests', requestsRouter);
   app.use('/api/ai', aiRouter);
