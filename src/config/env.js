@@ -23,7 +23,7 @@ const urlList = (value) =>
 
 /**
  * FRONTEND_URL is the one setting that connects the API to the website.
- *   FRONTEND_URL=https://starling.vercel.app
+ *   FRONTEND_URL=https://google.jharavi.in
  * Several are allowed (comma separated); the first is the public address used in
  * review links, QR codes and Google sign-in. A wildcard like https://*.vercel.app
  * also allows Vercel preview deployments. APP_URL is accepted as an older alias.

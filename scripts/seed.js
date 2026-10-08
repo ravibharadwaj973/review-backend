@@ -1,7 +1,7 @@
 /**
  * Seeds a complete demo workspace:
- *   email:    demo@starling.app
- *   password: starling123
+ *   email:    demo@reviewrankr.app
+ *   password: reviewrankr123
  * Run: npm run seed            (uses fast built-in analysis)
  *      SEED_USE_AI=true npm run seed   (uses Groq for analysis — slower)
  */
@@ -18,8 +18,8 @@ const { randomToken } = await import('../src/utils/crypto.js');
 const { heuristicRequestMessage, heuristicTopics } = await import('../src/modules/ai/heuristics.js');
 const { env } = await import('../src/config/env.js');
 
-const EMAIL = 'demo@starling.app';
-const PASSWORD = 'starling123';
+const EMAIL = 'demo@reviewrankr.app';
+const PASSWORD = 'reviewrankr123';
 
 await connectDB();
 
@@ -78,7 +78,7 @@ const services = await M.Service.insertMany(
 );
 
 const location = await M.Location.create({ business: business._id, title: business.name, address: 'Sector 18, Noida', isPrimary: true, google: { accountName: 'accounts/demo', locationName: 'locations/demo' }, lastSyncedAt: new Date() });
-await M.GoogleAccount.create({ business: business._id, mode: 'demo', email: 'demo@starling.local', status: 'connected', accountName: 'accounts/demo', locationName: 'locations/demo', locationTitle: business.name, lastSyncAt: new Date() });
+await M.GoogleAccount.create({ business: business._id, mode: 'demo', email: 'demo@reviewrankr.local', status: 'connected', accountName: 'accounts/demo', locationName: 'locations/demo', locationTitle: business.name, lastSyncAt: new Date() });
 
 // Reviews
 const reviews = await ingestReviews(business, demoReviews(services.map((s) => s.name), { count: 64 }), { source: 'demo', locationId: location._id });

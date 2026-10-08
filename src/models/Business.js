@@ -132,7 +132,7 @@ const businessSchema = new mongoose.Schema(
       opens: { type: Number, default: 0 }, // QR page opened (scan or shared link)
       composed: { type: Number, default: 0 }, // customer used the writing helper
       clicks: { type: Number, default: 0 }, // went on to Google's review form
-      submitted: { type: Number, default: 0 }, // reviews submitted in Starling
+      submitted: { type: Number, default: 0 }, // reviews submitted in ReviewRankr
       lastOpenAt: Date,
     },
     // Managed by platform admins: access, plan, price and payments

@@ -1,9 +1,9 @@
 {
-  "name": "starling-api",
+  "name": "reviewrankr-api",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Starling \u2014 AI review & reputation platform API",
+  "description": "ReviewRankr \u2014 AI review & reputation platform API",
   "main": "src/server.js",
   "engines": {
     "node": ">=20"

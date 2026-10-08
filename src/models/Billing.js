@@ -83,7 +83,7 @@ export const AdminLog = mongoose.model('AdminLog', adminLogSchema, 'adminLogs');
 const settingSchema = new mongoose.Schema(
   {
     key: { type: String, default: 'platform', unique: true },
-    companyName: { type: String, default: 'Starling' },
+    companyName: { type: String, default: 'ReviewRankr' },
     currency: { type: String, default: 'INR' },
     upiId: { type: String, default: '' },
     bankDetails: { type: String, default: '' },
@@ -98,6 +98,12 @@ const settingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 settingSchema.statics.get = async function get() {
-  return (await this.findOne({ key: 'platform' })) || this.create({ key: 'platform' });
+  const s = (await this.findOne({ key: 'platform' })) || (await this.create({ key: 'platform' }));
+  // The app used to be called Starling: update the old default name on bills once
+  if (s.companyName === 'Starling') {
+    s.companyName = 'ReviewRankr';
+    await s.save();
+  }
+  return s;
 };
 export const Setting = mongoose.model('Setting', settingSchema, 'settings');

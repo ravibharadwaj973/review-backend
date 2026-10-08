@@ -104,7 +104,7 @@ const oauthCallback = ah(async (req, res) => {
   }
   if (!tokens.refresh_token) {
     const existing = await GoogleAccount.findOne({ business: business._id, mode: 'live' }).select('+refreshTokenEnc');
-    if (!existing?.refreshTokenEnc) return back({ error: 'Google didn’t give long-term access. Remove Starling at myaccount.google.com/permissions and connect again.' });
+    if (!existing?.refreshTokenEnc) return back({ error: 'Google didn’t give long-term access. Remove ReviewRankr at myaccount.google.com/permissions and connect again.' });
   }
   let account = await GoogleAccount.findOne({ business: business._id }).select('+accessTokenEnc +refreshTokenEnc');
   if (account && account.mode === 'demo') {
@@ -270,7 +270,7 @@ googleRouter.post(
 
     await GoogleAccount.updateOne(
       { business: business._id },
-      { business: business._id, mode: 'demo', email: 'demo@starling.local', locationTitle: business.name, status: 'connected', lastSyncAt: new Date(), accountName: 'accounts/demo', locationName: 'locations/demo' },
+      { business: business._id, mode: 'demo', email: 'demo@reviewrankr.local', locationTitle: business.name, status: 'connected', lastSyncAt: new Date(), accountName: 'accounts/demo', locationName: 'locations/demo' },
       { upsert: true }
     );
     const location = await Location.findOneAndUpdate(

@@ -22,7 +22,7 @@ export async function connectDB() {
     } catch {
       throw new Error(
         'MONGODB_URI is not set and the embedded MongoDB package is unavailable. ' +
-          'Set MONGODB_URI (e.g. mongodb://localhost:27017/starling or a MongoDB Atlas URI).'
+          'Set MONGODB_URI (e.g. mongodb://localhost:27017/reviewrankr or a MongoDB Atlas URI).'
       );
     }
     const dbPath = path.resolve(env.embeddedMongoPath);
@@ -32,7 +32,7 @@ export async function connectDB() {
     embedded = await MongoMemoryServer.create({
       instance: { dbPath, storageEngine: 'wiredTiger', port: Number(process.env.EMBEDDED_MONGO_PORT || 27027) },
     });
-    uri = embedded.getUri('starling');
+    uri = embedded.getUri('reviewrankr');
   }
 
   await mongoose.connect(uri, { serverSelectionTimeoutMS: 15000 });

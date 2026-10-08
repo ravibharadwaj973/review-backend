@@ -9,7 +9,7 @@ async function main() {
   await ensureAdminFromEnv().catch((err) => console.warn('[admin] could not set up the admin login:', err.message));
   const app = createApp();
   const server = app.listen(env.port, () => {
-    console.log(`[api] Starling API listening on http://localhost:${env.port}`);
+    console.log(`[api] ReviewRankr API listening on http://localhost:${env.port}`);
     console.log(`[api] Frontend: ${env.appUrl}  (allowed origins: ${env.corsOrigins.join(', ')})`);
     console.log(`[api] Admin site: ${env.adminUrl || 'not set — add ADMIN_URL to .env (e.g. https://admin.yourdomain.in)'}`);
     if (env.isProd && /localhost|127\.0\.0\.1/.test(env.appUrl)) {

@@ -131,7 +131,7 @@ publicRouter.post('/b/:slug/compose', composeLimiter, ah(async (req, res) => {
   res.json(result);
 }));
 
-/* ---- Submit a review in Starling (no login) ------------------------------ */
+/* ---- Submit a review in ReviewRankr (no login) ------------------------------ */
 
 const submitSchema = z.object({
   rating: z.number().int().min(1, 'Choose a star rating').max(5),

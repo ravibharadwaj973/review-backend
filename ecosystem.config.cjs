@@ -3,7 +3,7 @@
 module.exports = {
   apps: [
     {
-      name: 'starling-api',
+      name: 'reviewrankr-api',
       script: 'src/server.js',
       cwd: __dirname,
       instances: 1, // the review-sync scheduler runs in this process; keep 1 unless you split out the worker

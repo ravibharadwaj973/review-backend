@@ -24,7 +24,7 @@ async function get(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const res = await fetch(u, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; StarlingBot/1.0; +https://starling.app)' } });
+    const res = await fetch(u, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReviewRankrBot/1.0; +https://google.jharavi.in)' } });
     if (!res.ok) throw new HttpError(400, `The website returned an error (${res.status})`);
     const type = res.headers.get('content-type') || '';
     if (!type.includes('html')) throw new HttpError(400, 'That address is not a web page');

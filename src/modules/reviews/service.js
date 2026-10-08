@@ -102,7 +102,7 @@ export async function publishReply({ review, business, user, text, aiResponseId 
   if (comment.length > 4096) throw new HttpError(400, 'Replies must be under 4,096 characters');
 
   const account = await GoogleAccount.findOne({ business: business._id }).select('+accessTokenEnc +refreshTokenEnc');
-  // Direct (in-app) reviews have no Google counterpart: the reply is stored in Starling only
+  // Direct (in-app) reviews have no Google counterpart: the reply is stored in ReviewRankr only
   let publishedTo = review.source === 'direct' ? 'app' : 'demo';
 
   let aiResponse = aiResponseId ? await AiResponse.findOne({ _id: aiResponseId, business: business._id }) : null;

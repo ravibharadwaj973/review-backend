@@ -21,7 +21,7 @@ const reviewSchema = new mongoose.Schema(
   {
     business: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', required: true, index: true },
     location: { type: mongoose.Schema.Types.ObjectId, ref: 'Location' },
-    // google = imported from Google, demo = sandbox, direct = submitted by the customer in Starling (no login)
+    // google = imported from Google, demo = sandbox, direct = submitted by the customer in ReviewRankr (no login)
     source: { type: String, enum: ['google', 'demo', 'direct'], default: 'google' },
     submittedVia: { type: String, enum: ['link', 'qr'] }, // for direct reviews
     services: [String], // services the customer said they took (direct reviews)
