@@ -3,6 +3,7 @@ import { requireAuth, requireBusiness } from '../../middleware/auth.js';
 import { ah } from '../../utils/http.js';
 import { Review, AiResponse, GoogleAccount } from '../../models/index.js';
 import { reviewOverview, topicStats, requestFunnel, aiMetrics } from './service.js';
+import { realReviewFilter, isLiveConnection } from '../reviews/policy.js';
 import { generateInsights } from '../ai/service.js';
 
 export const analyticsRouter = Router();
@@ -16,8 +17,8 @@ analyticsRouter.get('/dashboard', ah(async (req, res) => {
     topicStats(id),
     requestFunnel(id),
     aiMetrics(id),
-    Review.find({ business: id, status: { $in: ['unanswered', 'drafted'] } }).sort({ rating: 1, createTime: -1 }).limit(3).lean(),
-    Review.find({ business: id }).sort({ createTime: -1 }).limit(5).lean(),
+    Review.find({ ...realReviewFilter, business: id, status: { $in: ['unanswered', 'drafted'] } }).sort({ rating: 1, createTime: -1 }).limit(3).lean(),
+    Review.find({ ...realReviewFilter, business: id }).sort({ createTime: -1 }).limit(5).lean(),
     GoogleAccount.findOne({ business: id }).lean(),
   ]);
   const drafts = await AiResponse.find({ review: { $in: needsReply.map((r) => r._id) }, status: 'draft' }).lean();
@@ -27,10 +28,11 @@ analyticsRouter.get('/dashboard', ah(async (req, res) => {
     topics: { praised: topics.praised.slice(0, 5), criticized: topics.criticized.slice(0, 5), analyzed: topics.analyzed },
     funnel,
     ai,
-    needsReply: needsReply.map((r) => ({ ...r, draft: draftMap.get(String(r._id)) || null })),
+    canReply: isLiveConnection(google),
+    needsReply: (isLiveConnection(google) ? needsReply : []).map((r) => ({ ...r, draft: draftMap.get(String(r._id)) || null })),
     latest,
-    google: google ? { mode: google.mode, status: google.status, lastSyncAt: google.lastSyncAt, locationTitle: google.locationTitle } : null,
-    onboarding: req.business.onboarding,
+    google: google?.mode === 'live' ? { mode: google.mode, status: google.status, lastSyncAt: google.lastSyncAt, locationTitle: google.locationTitle } : null,
+    onboarding: { profile: req.business.onboarding?.profile, services: req.business.onboarding?.services, google: isLiveConnection(google) },
   });
 }));
 

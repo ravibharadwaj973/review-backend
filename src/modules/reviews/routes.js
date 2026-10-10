@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireBusiness } from '../../middleware/auth.js';
 import { ah, parse, notFound, paginate, badRequest } from '../../utils/http.js';
-import { Review, AiResponse, GoogleAccount, Service } from '../../models/index.js';
+import { Review, AiResponse, GoogleAccount, Service, GeneratedReview } from '../../models/index.js';
 import { analyzeAndStore, draftReply, publishReply } from './service.js';
+import { realReviewFilter, isLiveConnection, requireReplyConnection } from './policy.js';
 import * as google from '../google/client.js';
 
 export const reviewsRouter = Router();
@@ -12,7 +13,7 @@ reviewsRouter.use(requireAuth, requireBusiness);
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function buildFilter(businessId, q) {
-  const filter = { business: businessId };
+  const filter = { ...realReviewFilter, business: businessId };
   switch (q.filter) {
     case 'unanswered': filter.status = { $in: ['unanswered', 'drafted'] }; break;
     case 'answered': filter.status = 'answered'; break;
@@ -43,17 +44,19 @@ reviewsRouter.get('/', ah(async (req, res) => {
     Review.countDocuments(filter),
     countsFor(req.business._id),
   ]);
+  const account = await GoogleAccount.findOne({ business: req.business._id }).lean();
+  const canReply = isLiveConnection(account);
   const drafts = await AiResponse.find({ review: { $in: reviews.map((r) => r._id) }, status: { $in: ['draft', 'approved'] } }).sort({ createdAt: -1 }).lean();
   const draftByReview = new Map();
   for (const d of drafts) if (!draftByReview.has(String(d.review))) draftByReview.set(String(d.review), d);
   res.json({
-    reviews: reviews.map((r) => ({ ...r, draft: draftByReview.get(String(r._id)) || null })),
-    total, page, limit, counts,
+    reviews: reviews.map((r) => ({ ...r, draft: canReply ? draftByReview.get(String(r._id)) || null : null })),
+    total, page, limit, counts, canReply,
   });
 }));
 
 async function countsFor(businessId) {
-  const base = { business: businessId };
+  const base = { ...realReviewFilter, business: businessId };
   const [all, unanswered, answered, positive, neutral, negative, direct] = await Promise.all([
     Review.countDocuments(base),
     Review.countDocuments({ ...base, status: { $in: ['unanswered', 'drafted'] } }),
@@ -66,17 +69,28 @@ async function countsFor(businessId) {
   return { all, unanswered, answered, positive, neutral, negative, direct };
 }
 
+reviewsRouter.get('/generated', ah(async (req, res) => {
+  const { page, limit, skip } = paginate(req.query, { defaultLimit: 20 });
+  const filter = { business: req.business._id };
+  const [reviews, total] = await Promise.all([
+    GeneratedReview.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+    GeneratedReview.countDocuments(filter),
+  ]);
+  res.json({ reviews, total, page, limit });
+}));
+
 async function loadReview(req) {
-  const review = await Review.findOne({ _id: req.params.id, business: req.business._id });
+  const review = await Review.findOne({ ...realReviewFilter, _id: req.params.id, business: req.business._id });
   if (!review) throw notFound('Review');
   return review;
 }
 
 reviewsRouter.get('/:id', ah(async (req, res) => {
-  const review = await Review.findOne({ _id: req.params.id, business: req.business._id }).populate('customer', 'name phone email visits').populate('reviewRequest');
+  const review = await Review.findOne({ ...realReviewFilter, _id: req.params.id, business: req.business._id }).populate('customer', 'name phone email visits').populate('reviewRequest');
   if (!review) throw notFound('Review');
   const responses = await AiResponse.find({ review: review._id }).sort({ createdAt: -1 }).limit(10).lean();
-  res.json({ review, responses });
+  const account = await GoogleAccount.findOne({ business: req.business._id }).lean();
+  res.json({ review, responses, canReply: isLiveConnection(account) });
 }));
 
 reviewsRouter.post('/:id/analyze', ah(async (req, res) => {
@@ -93,6 +107,7 @@ reviewsRouter.post('/:id/draft', ah(async (req, res) => {
 }));
 
 reviewsRouter.patch('/:id/draft/:draftId', ah(async (req, res) => {
+  await requireReplyConnection(req.business._id, await loadReview(req));
   const body = parse(z.object({ text: z.string().trim().min(1).max(4096) }), req.body);
   const draft = await AiResponse.findOne({ _id: req.params.draftId, review: req.params.id, business: req.business._id });
   if (!draft) throw notFound('Draft');
@@ -114,6 +129,7 @@ reviewsRouter.post('/:id/draft/:draftId/hold', ah(async (req, res) => {
 }));
 
 reviewsRouter.post('/:id/approve', ah(async (req, res) => {
+  await requireReplyConnection(req.business._id, await loadReview(req));
   const body = parse(z.object({ draftId: z.string(), text: z.string().trim().min(1).max(4096) }), req.body);
   const draft = await AiResponse.findOne({ _id: body.draftId, review: req.params.id, business: req.business._id });
   if (!draft) throw notFound('Draft');
@@ -135,6 +151,7 @@ reviewsRouter.post('/:id/publish', ah(async (req, res) => {
 
 reviewsRouter.delete('/:id/reply', ah(async (req, res) => {
   const review = await loadReview(req);
+  await requireReplyConnection(req.business._id, review);
   if (!review.reply?.comment) throw badRequest('This review has no reply');
   if (review.source === 'google') {
     const account = await GoogleAccount.findOne({ business: req.business._id }).select('+accessTokenEnc +refreshTokenEnc');
@@ -148,9 +165,9 @@ reviewsRouter.delete('/:id/reply', ah(async (req, res) => {
 }));
 
 reviewsRouter.post('/analyze-pending', ah(async (req, res) => {
-  const pending = await Review.find({ business: req.business._id, 'analysis.analyzedAt': { $exists: false } }).limit(25);
+  const pending = await Review.find({ ...realReviewFilter, business: req.business._id, 'analysis.analyzedAt': { $exists: false } }).limit(25);
   const services = await Service.find({ business: req.business._id, active: true }).lean();
   for (const r of pending) await analyzeAndStore(r, req.business, services);
-  const remaining = await Review.countDocuments({ business: req.business._id, 'analysis.analyzedAt': { $exists: false } });
+  const remaining = await Review.countDocuments({ ...realReviewFilter, business: req.business._id, 'analysis.analyzedAt': { $exists: false } });
   res.json({ analyzed: pending.length, remaining });
 }));

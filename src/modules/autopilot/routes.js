@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth, requireBusiness } from '../../middleware/auth.js';
 import { ah, parse } from '../../utils/http.js';
 import { AiResponse, Review, Photo, Post, Question, GoogleAccount } from '../../models/index.js';
+import { realReviewFilter, isLiveConnection, requireReplyConnection } from '../reviews/policy.js';
 import { applyReplyRule, draftBacklog, publishDueReplies, replyRuleFor } from '../reviews/service.js';
 import { planPhotos, postedInWeek } from '../photos/schedule.js';
 import { planPosts } from '../posts/service.js';
@@ -54,12 +55,14 @@ autopilotRouter.get('/', ah(async (req, res) => {
   const startToday = zonedDate(today, '00:00', tz);
   const weekFrom = zonedDate(weekStart, '00:00', tz);
 
+  const realReviews = await Review.find({ ...realReviewFilter, business: b._id }).select('_id').lean();
+  const responseFilter = { business: b._id, review: { $in: realReviews.map((r) => r._id) } };
   const [account, autoDrafts, approvalDrafts, backlog, repliedThisWeek, queued, postedPhotos, upcomingPhotos, postDrafts, postScheduled, postsThisWeek, upcomingPosts, qAnswered, qSuggested] = await Promise.all([
     GoogleAccount.findOne({ business: b._id }).select('mode status locationName locationTitle').lean(),
-    AiResponse.find({ business: b._id, status: 'draft', autoPublishAt: { $exists: true } }).sort({ autoPublishAt: 1 }).limit(5).populate('review', 'reviewer rating comment').lean(),
-    AiResponse.countDocuments({ business: b._id, status: 'draft', autoPublishAt: { $exists: false } }),
-    Review.countDocuments({ business: b._id, status: 'unanswered' }),
-    AiResponse.countDocuments({ business: b._id, status: 'published', publishedAt: { $gte: weekFrom } }),
+    AiResponse.find({ ...responseFilter, status: 'draft', autoPublishAt: { $exists: true } }).sort({ autoPublishAt: 1 }).limit(5).populate('review', 'reviewer rating comment').lean(),
+    AiResponse.countDocuments({ ...responseFilter, status: 'draft', autoPublishAt: { $exists: false } }),
+    Review.countDocuments({ ...realReviewFilter, business: b._id, status: 'unanswered' }),
+    AiResponse.countDocuments({ ...responseFilter, status: 'published', publishedAt: { $gte: weekFrom } }),
     Photo.countDocuments({ business: b._id, queued: true }),
     postedInWeek(b._id, weekStart, tz),
     Photo.find({ business: b._id, queued: true, scheduledFor: { $gte: startToday, $lt: in7 } }).sort({ scheduledFor: 1 }).select('fileUrl scheduledFor caption category').lean(),
@@ -70,7 +73,7 @@ autopilotRouter.get('/', ah(async (req, res) => {
     Question.countDocuments({ business: b._id, status: 'answered' }),
     Question.countDocuments({ business: b._id, status: 'suggested' }),
   ]);
-  const autoCount = await AiResponse.countDocuments({ business: b._id, status: 'draft', autoPublishAt: { $exists: true } });
+  const autoCount = await AiResponse.countDocuments({ ...responseFilter, status: 'draft', autoPublishAt: { $exists: true } });
 
   const holidays = holidayPlan(b, { days: 60 });
   const days = Array.from({ length: 7 }, (_, i) => {
@@ -87,8 +90,8 @@ autopilotRouter.get('/', ah(async (req, res) => {
 
   res.json({
     settings: settingsOf(b),
-    connection: account ? { mode: account.mode, ready: account.mode === 'demo' || Boolean(account.locationName), title: account.locationTitle } : null,
-    replies: { auto: autoCount, nextAuto: autoDrafts, waitingApproval: approvalDrafts, backlog, repliedThisWeek },
+    connection: account?.mode === 'live' && account.status === 'connected' ? { mode: account.mode, ready: Boolean(account.locationName), title: account.locationTitle } : null,
+    replies: isLiveConnection(account) ? { auto: autoCount, nextAuto: autoDrafts, waitingApproval: approvalDrafts, backlog, repliedThisWeek } : { auto: 0, nextAuto: [], waitingApproval: 0, backlog: 0, repliedThisWeek: 0 },
     photos: { queued, postedThisWeek: postedPhotos },
     posts: { drafts: postDrafts, scheduled: postScheduled, publishedThisWeek: postsThisWeek },
     hours: {
@@ -123,10 +126,12 @@ autopilotRouter.patch('/', ah(async (req, res) => {
 }));
 
 async function reapplyReplyRules(business) {
+  const account = await GoogleAccount.findOne({ business: business._id });
+  if (!isLiveConnection(account)) return;
   const drafts = await AiResponse.find({ business: business._id, status: 'draft' }).populate('review');
   let i = 0;
   for (const d of drafts) {
-    if (!d.review || d.review.status === 'answered') continue;
+    if (!d.review || !['google', 'direct'].includes(d.review.source) || d.review.status === 'answered') continue;
     const decision = replyRuleFor(business, d.review);
     if (decision.rule === 'approve' && d.autoPublishAt) {
       d.autoPublishAt = undefined;
@@ -140,7 +145,8 @@ async function reapplyReplyRules(business) {
 
 /** Draft replies for older reviews with no reply; reply rules decide which post by themselves. */
 autopilotRouter.post('/replies/backlog', ah(async (req, res) => {
-  const count = await Review.countDocuments({ business: req.business._id, status: { $in: ['unanswered', 'drafted'] } });
+  await requireReplyConnection(req.business._id);
+  const count = await Review.countDocuments({ ...realReviewFilter, business: req.business._id, status: { $in: ['unanswered', 'drafted'] } });
   draftBacklog(req.business, { limit: 30 }).catch((err) => console.warn('[autopilot] backlog:', err.message));
   res.status(202).json({ started: true, reviews: Math.min(count, 30) });
 }));

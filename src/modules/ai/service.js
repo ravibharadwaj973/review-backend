@@ -1,6 +1,7 @@
 import { chat, chatJSON } from './groq.js';
 import * as H from './heuristics.js';
 import { AiUnavailableError } from './groq.js';
+import { HttpError } from '../../utils/http.js';
 import { catalogFor } from './catalog.js';
 
 let warnedMissingKey = false;
@@ -127,8 +128,7 @@ ${instruction ? `Owner's instruction for this reply: ${instruction}` : ''}`,
     if (!clean) throw new Error('empty reply');
     return { text: clean.slice(0, 4000), model, tone: voice };
   } catch (err) {
-    logFallback('reply', err);
-    return { text: H.heuristicReply({ review, analysis, business }), model: 'heuristic', tone: voice };
+    throw new HttpError(503, 'Groq could not generate a reply. Check the AI configuration and try again.');
   }
 }
 
@@ -355,8 +355,7 @@ Write version #${variant + 1}${variant ? ' — make it clearly different in word
     if (!clean) throw new Error('empty');
     return { text: clean.slice(0, 1500), model };
   } catch (err) {
-    logFallback('compose', err);
-    return { text: H.heuristicCustomerReview({ rating, services, liked, disliked, note, staff, variant }), model: 'heuristic' };
+    throw new HttpError(503, 'Groq could not generate a review draft. Please try again or write your own review.');
   }
 }
 

@@ -1,3 +1,5 @@
+throw new Error('Demo seeding is disabled. Business accounts must use real customer data.');
+
 /**
  * Seeds a complete demo workspace:
  *   email:    demo@reviewrankr.app

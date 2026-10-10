@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import { requireAuth, requireAdmin, signToken } from '../../middleware/auth.js';
 import { ah, parse, notFound, badRequest, conflict, paginate } from '../../utils/http.js';
 import {
-  Business, User, GoogleAccount, Review, AiResponse, ReviewRequest, Photo, Post, Customer, Service, Location, Question,
+  Business, User, GoogleAccount, Review, GeneratedReview, AiResponse, ReviewRequest, Photo, Post, Customer, Service, Location, Question,
   Plan, Invoice, Payment, AdminLog, Setting, CYCLES, PAYMENT_METHODS,
 } from '../../models/index.js';
 import { env, googleConfigured, isAdminUrl } from '../../config/env.js';
@@ -299,7 +299,7 @@ adminRouter.delete('/accounts/:id', ah(async (req, res) => {
   const body = parse(z.object({ confirmName: z.string() }), req.body || {});
   const b = await loadBusiness(req.params.id);
   if (body.confirmName.trim() !== b.name) throw badRequest('Type the business name exactly to delete it');
-  const models = [Service, Customer, GoogleAccount, Review, AiResponse, ReviewRequest, Photo, Location, Post, Question, Invoice, Payment];
+  const models = [Service, Customer, GoogleAccount, Review, GeneratedReview, AiResponse, ReviewRequest, Photo, Location, Post, Question, Invoice, Payment];
   await Promise.all(models.map((M) => M.deleteMany({ business: b._id })));
   const ownerId = b.owner;
   await b.deleteOne();
@@ -626,4 +626,3 @@ adminRouter.get('/activity', ah(async (_req, res) => {
   const logs = await AdminLog.find().sort({ createdAt: -1 }).limit(200).populate('admin', 'name').populate('business', 'name').lean();
   res.json({ logs });
 }));
-

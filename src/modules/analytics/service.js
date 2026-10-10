@@ -1,5 +1,7 @@
 import { Review, ReviewRequest, AiResponse, Customer } from '../../models/index.js';
 
+import { realReviewFilter } from '../reviews/policy.js';
+
 const MONTH = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const round = (n, p = 1) => (Number.isFinite(n) ? Number(n.toFixed(p)) : 0);
 const startOfMonth = (offset = 0) => {
@@ -8,11 +10,11 @@ const startOfMonth = (offset = 0) => {
 };
 
 export async function reviewOverview(businessId) {
-  const all = await Review.find({ business: businessId })
+  const all = await Review.find({ ...realReviewFilter, business: businessId })
     .select('rating createTime status reply analysis.sentiment source')
     .lean();
   // Rating, volume and response metrics describe the Google profile; in-app reviews are counted separately
-  const reviews = all.filter((r) => r.source !== 'direct');
+  const reviews = all.filter((r) => r.source === 'google');
   const direct = all.filter((r) => r.source === 'direct');
 
   const total = reviews.length;
@@ -87,7 +89,7 @@ export async function reviewOverview(businessId) {
 }
 
 export async function topicStats(businessId, { since } = {}) {
-  const filter = { business: businessId, 'analysis.analyzedAt': { $exists: true } };
+  const filter = { ...realReviewFilter, business: businessId, 'analysis.analyzedAt': { $exists: true } };
   if (since) filter.createTime = { $gte: since };
   const reviews = await Review.find(filter).select('rating createTime analysis').lean();
   const praised = new Map();
@@ -147,12 +149,14 @@ export async function requestFunnel(businessId) {
 }
 
 export async function aiMetrics(businessId) {
+  const reviews = await Review.find({ ...realReviewFilter, business: businessId }).select('_id').lean();
+  const responseFilter = { business: businessId, review: { $in: reviews.map((r) => r._id) } };
   const [analyzed, generated, approved, published, edited] = await Promise.all([
-    Review.countDocuments({ business: businessId, 'analysis.analyzedAt': { $exists: true } }),
-    AiResponse.countDocuments({ business: businessId }),
-    AiResponse.countDocuments({ business: businessId, status: { $in: ['approved', 'published'] } }),
-    AiResponse.countDocuments({ business: businessId, status: 'published' }),
-    AiResponse.countDocuments({ business: businessId, status: 'published', edited: true }),
+    Review.countDocuments({ ...realReviewFilter, business: businessId, 'analysis.analyzedAt': { $exists: true } }),
+    AiResponse.countDocuments({ ...responseFilter }),
+    AiResponse.countDocuments({ ...responseFilter, status: { $in: ['approved', 'published'] } }),
+    AiResponse.countDocuments({ ...responseFilter, status: 'published' }),
+    AiResponse.countDocuments({ ...responseFilter, status: 'published', edited: true }),
   ]);
   return { analyzed, generated, approved, published, edited, editRate: published ? round((edited / published) * 100, 0) : 0 };
 }

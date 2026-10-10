@@ -4,6 +4,7 @@ import rateLimit from 'express-rate-limit';
 import { ReviewRequest, Business, Customer, Service } from '../../models/index.js';
 import { ah, notFound, parse, HttpError } from '../../utils/http.js';
 import { composeCustomerReview } from '../ai/service.js';
+import { recordGeneratedReview } from '../reviews/generated.js';
 import { Review } from '../../models/index.js';
 import { processNewReviews } from '../reviews/service.js';
 import { randomToken } from '../../utils/crypto.js';
@@ -98,8 +99,11 @@ publicRouter.post('/r/:token/compose', composeLimiter, ah(async (req, res) => {
   const request = await ReviewRequest.findOne({ token: req.params.token });
   if (!request) throw notFound('Link');
   if ((request.composeCount || 0) >= 25) throw new HttpError(429, 'You’ve tried a lot of versions. Please write the rest in your own words.');
-  const business = await Business.findById(request.business).select('name category').lean();
+  const business = await Business.findById(request.business).select('name category account.status').lean();
+  if (!business) throw notFound('Business');
+  if (business.account?.status === 'suspended') throw PAUSED();
   const result = await composeCustomerReview({ business, ...body });
+  await recordGeneratedReview({ business, body, result, source: 'link', reviewRequest: request._id });
   await ReviewRequest.updateOne({ _id: request._id }, { $inc: { composeCount: 1 } });
   res.json(result);
 }));
@@ -129,6 +133,7 @@ publicRouter.post('/b/:slug/compose', composeLimiter, ah(async (req, res) => {
   const body = parse(composeSchema, req.body);
   const business = await bySlug(req.params.slug);
   const result = await composeCustomerReview({ business, ...body });
+  await recordGeneratedReview({ business, body, result, source: 'qr' });
   await Business.updateOne({ _id: business._id }, { $inc: { 'qrStats.composed': 1 } });
   res.json(result);
 }));

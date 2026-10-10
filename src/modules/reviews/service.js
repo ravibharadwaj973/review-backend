@@ -1,13 +1,15 @@
-import { Review, AiResponse, Service, Customer, ReviewRequest, GoogleAccount, Question, Business } from '../../models/index.js';
+import { Review, AiResponse, Service, Customer, ReviewRequest, Question, Business } from '../../models/index.js';
 import { analyzeReview, generateReply } from '../ai/service.js';
 import * as google from '../google/client.js';
+import { requireReplyConnection, realReviewFilter } from './policy.js';
 import { HttpError } from '../../utils/http.js';
 
 /**
- * Upserts reviews coming from Google (or the demo source).
+ * Upserts real customer reviews imported from Google.
  * Returns the list of reviews that were newly created.
  */
 export async function ingestReviews(business, items, { source = 'google', locationId } = {}) {
+  if (source !== 'google') throw new HttpError(409, 'Only real Google reviews can be imported');
   const created = [];
   for (const item of items) {
     const existing = await Review.findOne({ business: business._id, googleReviewId: item.googleReviewId });
@@ -29,8 +31,8 @@ export async function ingestReviews(business, items, { source = 'google', locati
     const review = await Review.create({
       business: business._id,
       location: locationId,
-      source,
       ...item,
+      source,
       status: item.reply?.comment ? 'answered' : 'unanswered',
     });
     created.push(review);
@@ -64,7 +66,7 @@ export async function analyzeAndStore(review, business, services) {
 }
 
 export async function recentReplies(business) {
-  const replied = await Review.find({ business: business._id, 'reply.comment': { $exists: true, $ne: '' } })
+  const replied = await Review.find({ ...realReviewFilter, business: business._id, 'reply.comment': { $exists: true, $ne: '' } })
     .sort({ 'reply.updateTime': -1 })
     .limit(3)
     .select('reply')
@@ -76,6 +78,7 @@ export const answeredFaqs = (businessId) =>
   Question.find({ business: businessId, status: 'answered' }).sort({ updatedAt: -1 }).limit(15).select('question answer').lean();
 
 export async function draftReply(review, business, { tone, instruction } = {}) {
+  await requireReplyConnection(business._id, review);
   const services = await Service.find({ business: business._id, active: true }).lean();
   if (!review.analysis?.analyzedAt) await analyzeAndStore(review, business, services);
   const [previousReplies, faqs] = await Promise.all([recentReplies(business), answeredFaqs(business._id)]);
@@ -94,18 +97,18 @@ export async function draftReply(review, business, { tone, instruction } = {}) {
 
 /**
  * Publishes a reply. For live connections it is sent to Google; the review is only
- * marked answered after Google accepts it. Demo connections never claim Google publishing.
+ * marked answered after Google accepts it.
  */
 export async function publishReply({ review, business, user, text, aiResponseId }) {
   const comment = String(text || '').trim();
   if (!comment) throw new HttpError(400, 'Write a reply before publishing');
   if (comment.length > 4096) throw new HttpError(400, 'Replies must be under 4,096 characters');
 
-  const account = await GoogleAccount.findOne({ business: business._id }).select('+accessTokenEnc +refreshTokenEnc');
+  const account = await requireReplyConnection(business._id, review);
   // Direct (in-app) reviews have no Google counterpart: the reply is stored in ReviewRankr only
-  let publishedTo = review.source === 'direct' ? 'app' : 'demo';
+  let publishedTo = review.source === 'direct' ? 'app' : 'google';
 
-  let aiResponse = aiResponseId ? await AiResponse.findOne({ _id: aiResponseId, business: business._id }) : null;
+  let aiResponse = aiResponseId ? await AiResponse.findOne({ _id: aiResponseId, business: business._id, review: review._id }) : null;
 
   if (review.source === 'google') {
     if (!account || account.mode !== 'live') throw new HttpError(409, 'Connect your Google Business Profile to publish replies');
@@ -197,6 +200,8 @@ export function replyRuleFor(business, review) {
 /** Marks a draft to be posted automatically if the business's rules allow it. */
 export async function applyReplyRule(draft, review, business, { extraDelayMinutes = 0 } = {}) {
   if (business.automation?.autoDraftReplies === false) return { rule: 'approve' };
+  await requireReplyConnection(business._id, review);
+  if (!draft.model?.startsWith('groq:')) return { rule: 'approve' };
   const decision = replyRuleFor(business, review);
   if (decision.rule === 'auto') {
     const delay = Number(business.automation?.replyDelayMinutes ?? 30) + extraDelayMinutes;
@@ -229,7 +234,7 @@ export async function processNewReviews(business, reviews) {
  * Auto replies are spaced a few minutes apart so they don't all appear at once.
  */
 export async function draftBacklog(business, { limit = 30 } = {}) {
-  const reviews = await Review.find({ business: business._id, status: { $in: ['unanswered', 'drafted'] } }).sort({ createTime: -1 }).limit(limit);
+  const reviews = await Review.find({ ...realReviewFilter, business: business._id, status: { $in: ['unanswered', 'drafted'] } }).sort({ createTime: -1 }).limit(limit);
   let drafted = 0;
   let scheduled = 0;
   for (const review of reviews) {
@@ -264,6 +269,8 @@ export async function publishDueReplies({ limit = 25, businessId } = {}) {
       continue;
     }
     try {
+      await requireReplyConnection(business._id, review);
+      if (!draft.model?.startsWith('groq:')) throw new HttpError(409, 'Automatic replies require a Groq-generated draft');
       await publishReply({ review, business, text: draft.finalText || draft.text, aiResponseId: draft._id });
       published += 1;
     } catch (err) {

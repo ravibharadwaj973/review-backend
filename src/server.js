@@ -16,7 +16,7 @@ async function main() {
       console.warn('[api] FRONTEND_URL is still localhost — set it to your website address so links and QR codes work.');
     }
     console.log(`[api] AI: ${groqConfigured() ? `Groq (${env.groq.model})` : 'built-in fallback (set GROQ_API_KEY for Groq)'}`);
-    console.log(`[api] Google Business Profile: ${googleConfigured() ? 'OAuth configured' : 'not configured — demo connection available'}`);
+    console.log(`[api] Google Business Profile: ${googleConfigured() ? 'OAuth configured' : 'not configured — connect Google after configuring OAuth'}`);
   });
   const stopScheduler = env.worker.inProcess ? startScheduler() : () => {};
 

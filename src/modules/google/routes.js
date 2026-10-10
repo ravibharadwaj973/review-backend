@@ -8,8 +8,8 @@ import { GoogleAccount, Location, Service, Photo, Review, Business, User } from 
 import * as google from './client.js';
 import { usableReviewLink } from '../../utils/review-link.js';
 import * as sync from './sync.js';
-import { demoReviews, demoNewReview } from './demo.js';
-import { ingestReviews, processNewReviews } from '../reviews/service.js';
+
+
 
 export const googleRouter = Router();
 
@@ -60,7 +60,7 @@ googleAuthRouter.get(
       return res.redirect(`${env.appUrl}${ret}?${new URLSearchParams({ error: message })}`);
     };
 
-    if (!googleConfigured()) return fail(409, 'Google sign-in is not configured on the server. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or try the demo connection.');
+    if (!googleConfigured()) return fail(409, 'Google sign-in is not configured on the server. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.');
     const user = await userFromRequest(req);
     if (!user) {
       if (json) throw new HttpError(401, 'Sign in first');
@@ -226,7 +226,7 @@ googleRouter.get(
   ah(async (req, res) => {
     const account = await GoogleAccount.findOne({ business: req.business._id });
     const location = await Location.findOne({ business: req.business._id, isPrimary: true });
-    res.json({ googleConfigured: googleConfigured(), account, location, reviewLink: req.business.reviewLink });
+    res.json({ googleConfigured: googleConfigured(), account: account?.mode === 'live' ? account : null, location: account?.mode === 'live' ? location : null, reviewLink: req.business.reviewLink });
   })
 );
 
@@ -234,7 +234,7 @@ googleRouter.get(
   '/oauth/url',
   ah(async (req, res) => {
     if (!googleConfigured()) {
-      throw new HttpError(409, 'Google sign-in is not configured on the server. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or try the demo connection.');
+      throw new HttpError(409, 'Google sign-in is not configured on the server. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.');
     }
     res.json({ url: google.authUrl(oauthState(req.business, req.query.return)) });
   })
@@ -264,77 +264,16 @@ googleRouter.post(
   })
 );
 
-/** Sandbox connection with sample reviews so the full workflow can be explored. */
-googleRouter.post(
-  '/demo',
-  ah(async (req, res) => {
-    const business = req.business;
-    const existing = await GoogleAccount.findOne({ business: business._id });
-    if (existing?.mode === 'live') throw new HttpError(409, 'A live Google profile is already connected');
-
-    await GoogleAccount.updateOne(
-      { business: business._id },
-      { business: business._id, mode: 'demo', email: 'demo@reviewrankr.local', locationTitle: business.name, status: 'connected', lastSyncAt: new Date(), accountName: 'accounts/demo', locationName: 'locations/demo' },
-      { upsert: true }
-    );
-    const location = await Location.findOneAndUpdate(
-      { business: business._id, 'google.locationName': 'locations/demo' },
-      { business: business._id, title: business.name, isPrimary: true, address: [business.address?.line1, business.address?.city].filter(Boolean).join(', '), google: { accountName: 'accounts/demo', locationName: 'locations/demo' }, lastSyncedAt: new Date() },
-      { upsert: true, new: true }
-    );
-    // The demo never touches the review link: customers must keep reaching the real Google page
-    business.onboarding.google = true;
-    await business.save();
-
-    const services = await Service.find({ business: business._id, active: true }).lean();
-    const created = await ingestReviews(business, demoReviews(services.map((s) => s.name)), { source: 'demo', locationId: location._id });
-    // Analyse everything; draft replies only for the recent unanswered ones.
-    const recent = (r) => Date.now() - r.createTime.getTime() < 30 * 864e5;
-    processInBackground(business, created, recent);
-    res.json({ ok: true, imported: created.length });
-  })
-);
-
-function processInBackground(business, reviews, shouldDraft) {
-  (async () => {
-    const draftable = reviews.filter((r) => r.status === 'unanswered' && shouldDraft(r));
-    const others = reviews.filter((r) => !draftable.includes(r));
-    await processNewReviews(business, draftable);
-    // analysis only, no drafts
-    const noDraft = { ...business.toObject(), automation: { ...business.automation, autoDraftReplies: false } };
-    const { analyzeAndStore } = await import('../reviews/service.js');
-    const services = await Service.find({ business: business._id, active: true }).lean();
-    for (const r of others) {
-      try {
-        await analyzeAndStore(r, noDraft, services);
-      } catch (err) {
-        console.warn('[demo] analyze failed', err.message);
-      }
-    }
-  })().catch((err) => console.warn('[demo] background processing failed:', err.message));
-}
-
-googleRouter.post(
-  '/demo/new-review',
-  ah(async (req, res) => {
-    const account = await GoogleAccount.findOne({ business: req.business._id });
-    if (account?.mode !== 'demo') throw badRequest('Simulated reviews are only available on the demo connection');
-    const body = parse(z.object({ reviewerName: z.string().max(80).optional() }), req.body || {});
-    const services = await Service.find({ business: req.business._id, active: true }).lean();
-    const location = await Location.findOne({ business: req.business._id, isPrimary: true });
-    const created = await ingestReviews(req.business, [demoNewReview(services.map((s) => s.name), body)], { source: 'demo', locationId: location?._id });
-    await processNewReviews(req.business, created);
-    const review = await Review.findById(created[0]._id);
-    res.status(201).json({ review });
-  })
-);
+googleRouter.post(['/demo', '/demo/new-review'], ah(async () => {
+  throw new HttpError(409, 'Demo reviews are disabled. Connect a real Google Business Profile to import customer reviews.');
+}));
 
 googleRouter.post(
   '/sync',
   ah(async (req, res) => {
     const account = await GoogleAccount.findOne({ business: req.business._id });
     if (!account) throw badRequest('Connect Google first');
-    if (account.mode === 'demo') return res.json({ created: 0, total: await Review.countDocuments({ business: req.business._id }), demo: true });
+    if (account.mode !== 'live') throw new HttpError(409, 'Connect a real Google Business Profile to import reviews');
     const result = await sync.syncReviews(req.business);
     res.json(result);
   })

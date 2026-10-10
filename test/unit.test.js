@@ -75,13 +75,11 @@ test('Google review mapping', () => {
   assert.equal(starToNumber('FIVE'), 5);
 });
 
-test('AI service falls back gracefully without a Groq key', async () => {
+test('AI analysis remains available but reply generation requires Groq', async () => {
   const review = { rating: 5, comment: 'Loved the facial, staff were friendly', reviewer: { name: 'Neha' } };
   const analysis = await analyzeReview({ review, business, services: [{ name: 'Facial' }] });
   assert.equal(analysis.model, 'heuristic');
-  const reply = await generateReply({ review, analysis, business, services: [] });
-  assert.equal(reply.model, 'heuristic');
-  assert.match(reply.text, /facial/i);
+  await assert.rejects(generateReply({ review, analysis, business, services: [] }), /Groq could not generate a reply/);
 });
 
 test('service catalogue covers many business types', async () => {
@@ -100,9 +98,9 @@ test('service discovery falls back to the catalogue and skips existing services'
   assert.ok(!res.services.some((s) => s.name.toLowerCase() === 'yoga class'));
 });
 
-test('customer review draft uses only their choices and stays honest', async () => {
-  const { composeCustomerReview } = await import('../src/modules/ai/service.js');
-  const { text } = await composeCustomerReview({ business, rating: 3, services: ['Facial'], liked: ['Cleanliness'], disliked: ['Waiting time'], note: '' });
+test('legacy customer template uses only the customer choices', async () => {
+  const { heuristicCustomerReview } = await import('../src/modules/ai/heuristics.js');
+  const text = heuristicCustomerReview({ rating: 3, services: ['Facial'], liked: ['Cleanliness'], disliked: ['Waiting time'], note: '' });
   assert.match(text, /facial/i);
   assert.match(text, /wait/i);
   assert.doesNotMatch(text, /amazing|best ever|highly recommend/i);
@@ -232,4 +230,58 @@ test('Google review link: Place IDs, placeholders and the fallback', async () =>
   const fb = googleReviewTarget({ name: 'Glow Studio', address: { city: 'Noida' }, reviewLink: '' });
   assert.equal(fb.exact, false);
   assert.equal(fb.url, 'https://www.google.com/search?q=Glow%20Studio%20Noida%20reviews');
+});
+
+test('only a live connected Google location enables replies', async () => {
+  const { isLiveConnection } = await import('../src/modules/reviews/policy.js');
+  assert.equal(isLiveConnection(null), false);
+  assert.equal(isLiveConnection({ mode: 'demo', status: 'connected', locationName: 'locations/demo' }), false);
+  assert.equal(isLiveConnection({ mode: 'live', status: 'needs_location' }), false);
+  assert.equal(isLiveConnection({ mode: 'live', status: 'error', locationName: 'locations/1' }), false);
+  assert.equal(isLiveConnection({ mode: 'live', status: 'connected', locationName: 'locations/1' }), true);
+});
+
+test('demo imports are rejected before any database writes', async () => {
+  const { ingestReviews } = await import('../src/modules/reviews/service.js');
+  await assert.rejects(ingestReviews({ _id: 'business' }, [], { source: 'demo' }), /Only real Google reviews/);
+});
+
+test('generated reviews save Groq output separately with business ownership', async () => {
+  const { GeneratedReview } = await import('../src/models/GeneratedReview.js');
+  const { recordGeneratedReview } = await import('../src/modules/reviews/generated.js');
+  const original = GeneratedReview.create;
+  const writes = [];
+  GeneratedReview.create = async (record) => { writes.push(record); return record; };
+  try {
+    const context = { business: { _id: 'business-1' }, body: { rating: 4, services: ['Facial'] }, source: 'qr' };
+    await assert.rejects(recordGeneratedReview({ ...context, result: { text: 'Template', model: 'heuristic' } }), (err) => err.status === 503);
+    await assert.rejects(recordGeneratedReview({ ...context, result: { text: '', model: 'groq:test' } }), (err) => err.status === 503);
+    assert.equal(writes.length, 0);
+    await recordGeneratedReview({ ...context, result: { text: 'My own experience.', model: 'groq:test' } });
+    assert.deepEqual(writes, [{ business: 'business-1', reviewRequest: undefined, source: 'qr', text: 'My own experience.', model: 'groq:test', rating: 4, services: ['Facial'] }]);
+  } finally {
+    GeneratedReview.create = original;
+  }
+});
+
+test('customer review drafts require Groq and never use a template silently', async () => {
+  const { composeCustomerReview } = await import('../src/modules/ai/service.js');
+  await assert.rejects(composeCustomerReview({ business, rating: 5, services: ['Facial'] }),
+    (err) => err.status === 503 && /Groq could not generate a review draft/.test(err.message));
+});
+
+test('disconnected and demo accounts cannot draft or publish replies', async () => {
+  const { GoogleAccount } = await import('../src/models/index.js');
+  const { draftReply, publishReply } = await import('../src/modules/reviews/service.js');
+  const original = GoogleAccount.findOne;
+  const review = { source: 'google', googleReviewId: '1' };
+  try {
+    for (const account of [null, { mode: 'demo', status: 'connected', locationName: 'locations/demo' }]) {
+      GoogleAccount.findOne = () => ({ select: async () => account });
+      await assert.rejects(draftReply(review, business), (err) => err.status === 409);
+      await assert.rejects(publishReply({ review, business, text: 'Thanks' }), (err) => err.status === 409);
+    }
+  } finally {
+    GoogleAccount.findOne = original;
+  }
 });
