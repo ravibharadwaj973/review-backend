@@ -1,9 +1,11 @@
-import { GoogleAccount, Location, Service, Photo, Business } from '../../models/index.js';
+import { GoogleAccount, Location, Service, Photo, Business, CompletedActivity } from '../../models/index.js';
 import { GOOGLE_MEDIA_CATEGORY } from '../../models/Photo.js';
 import * as google from './client.js';
 import { ingestReviews, fromGoogleReview, processNewReviews } from '../reviews/service.js';
 import { env } from '../../config/env.js';
 import { effectiveHours, hoursSignature, specialHoursToGoogle } from '../hours/service.js';
+import { isLiveConnection } from '../reviews/policy.js';
+import { approvedMedia, supportedPhoto } from '../photos/audit.js';
 
 export async function loadAccount(businessId) {
   return GoogleAccount.findOne({ business: businessId }).select('+accessTokenEnc +refreshTokenEnc');
@@ -38,8 +40,12 @@ export async function syncReviews(business) {
 /** Reads the current Google profile so the app can show what is / isn't in sync. */
 export async function refreshRemoteSnapshot(business) {
   const account = await loadAccount(business._id);
-  if (!account || account.mode !== 'live' || !account.locationName) return null;
+  if (!isLiveConnection(account)) return null;
   const loc = await google.getLocation(account, account.locationName);
+  const month = google.searchKeywordMonth();
+  const [attributes, verification, keywords] = await Promise.allSettled([
+    google.getAttributes(account), google.getVerification(account), google.getSearchKeywords(account, month),
+  ]);
   let photoCount;
   try {
     const media = await google.listMedia(account);
@@ -53,11 +59,24 @@ export async function refreshRemoteSnapshot(business) {
     website: loc.websiteUri || '',
     description: loc.profile?.description || '',
     address: google.formatAddress(loc.storefrontAddress),
+    latlng: loc.latlng || null,
+    serviceArea: loc.serviceArea || null,
+    openInfo: loc.openInfo || null,
+    mapsUri: loc.metadata?.mapsUri || '',
     hours: google.hoursFromGoogle(loc.regularHours),
     serviceCount: (loc.serviceItems || []).length,
     specialCount: (loc.specialHours?.specialHourPeriods || []).length,
     photoCount,
     fetchedAt: new Date(),
+    categories: loc.categories,
+    serviceNames: (loc.serviceItems || []).map((s) => s.freeFormServiceItem?.label?.displayName || s.structuredServiceItem?.serviceTypeId?.split(':').pop()?.replace(/_/g, ' ')).filter(Boolean),
+    attributes: attributes.status === 'fulfilled' ? attributes.value.attributes || [] : null,
+    attributeError: attributes.status === 'rejected' ? attributes.reason.message : undefined,
+    verification: verification.status === 'fulfilled' ? verification.value : null,
+    verificationError: verification.status === 'rejected' ? verification.reason.message : undefined,
+    searchKeywords: keywords.status === 'fulfilled' ? keywords.value : null,
+    searchKeywordError: keywords.status === 'rejected' ? keywords.reason.message : undefined,
+    searchMonth: `${month.year}-${String(month.month).padStart(2, '0')}`,
   };
   await account.save();
   return account.remote;
@@ -70,6 +89,7 @@ const SECTION_MASKS = {
   description: ['profile.description'],
   hours: ['regularHours'],
   specialHours: ['specialHours'],
+  categories: ['categories'],
 };
 
 /**
@@ -100,9 +120,21 @@ export async function pushProfile(business, sections) {
     if (section === 'description') patch.profile = { description: business.description };
     if (section === 'hours') patch.regularHours = google.hoursToGoogle(effectiveHours(business));
     if (section === 'specialHours') patch.specialHours = specialHoursToGoogle(business);
+    if (section === 'categories') {
+      if (!business.googleCategories?.primary?.name) {
+        results[section] = { status: 'failed', message: 'Select a primary Google category first' };
+        continue;
+      }
+      patch.categories = {
+        primaryCategory: { name: business.googleCategories.primary.name },
+        additionalCategories: (business.googleCategories.additional || []).map((c) => ({ name: c.name })),
+      };
+    }
     try {
       await google.updateLocation(account, account.locationName, patch, mask);
       results[section] = { status: 'synced' };
+      await CompletedActivity.create({ business: business._id, locationName: account.locationName, title: `Google profile updated: ${section}`, kind: 'profile', completedAt: new Date(), source: 'google' }).catch((err) => console.warn('[performance] activity recording:', err.message));
+      if (section === 'categories') await Location.updateOne({ business: business._id, 'google.locationName': account.locationName }, { 'google.primaryCategory': business.googleCategories.primary.name });
       if (section === 'hours') business.googleHoursSig = hoursSignature(effectiveHours(business));
     } catch (err) {
       results[section] = { status: 'failed', message: err.message };
@@ -149,13 +181,9 @@ export async function pushServices(business) {
 
 /** Uploads one photo to Google. Google must be able to download it from a public URL. */
 export async function pushPhoto(business, photo) {
+  if (!approvedMedia(photo) || !supportedPhoto(photo)) throw Object.assign(new Error('Only approved photos can be published through this API'), { status: 409 });
   const account = await loadAccount(business._id);
-  if (!account) throw Object.assign(new Error('Connect Google first'), { status: 409 });
-  if (account.mode === 'demo') {
-    photo.google = { syncStatus: 'demo', syncedAt: new Date() };
-    await photo.save();
-    return photo;
-  }
+  if (!isLiveConnection(account)) throw Object.assign(new Error('Connect a live Google Business Profile first'), { status: 409 });
   const base = env.publicAssetUrl;
   if (!base || !/^https:\/\//.test(base) || /localhost|127\.0\.0\.1/.test(base)) {
     photo.google = { syncStatus: 'failed', error: 'Google needs a public https address to fetch photos. Set PUBLIC_ASSET_URL to your deployed API URL.' };

@@ -6,7 +6,7 @@ export const PHOTO_CATEGORIES = [
 
 // Our categories → Google Business Profile media categories
 export const GOOGLE_MEDIA_CATEGORY = {
-  logo: 'LOGO',
+  logo: 'PROFILE',
   cover: 'COVER',
   interior: 'INTERIOR',
   exterior: 'EXTERIOR',
@@ -26,6 +26,16 @@ const photoSchema = new mongoose.Schema(
     fileName: String,
     mimeType: String,
     size: Number,
+    mediaType: { type: String, enum: ['photo', 'video'], default: 'photo' },
+    width: Number,
+    height: Number,
+    capturedAt: Date,
+    services: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
+    approval: {
+      status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+      approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      approvedAt: Date,
+    },
     caption: { type: String, default: '' },
     // Weekly photo schedule: queued photos are posted to Google a few per week
     queued: { type: Boolean, default: false, index: true },
@@ -41,6 +51,8 @@ const photoSchema = new mongoose.Schema(
       mediaName: String,
       syncedAt: Date,
       error: String,
+      viewCount: String,
+      insightsAt: Date,
     },
   },
   { timestamps: true }

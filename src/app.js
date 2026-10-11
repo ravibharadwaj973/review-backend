@@ -22,6 +22,9 @@ import { questionsRouter } from './modules/questions/routes.js';
 import { autopilotRouter } from './modules/autopilot/routes.js';
 import { adminRouter } from './modules/admin/routes.js';
 import { billingRouter } from './modules/billing/routes.js';
+import { websiteRouter } from './modules/website/routes.js';
+import { performanceRouter } from './modules/performance/routes.js';
+import { prominenceRouter } from './modules/prominence/routes.js';
 
 export function createApp() {
   const app = express();
@@ -74,6 +77,9 @@ export function createApp() {
   app.use('/api/questions', questionsRouter);
   app.use('/api/autopilot', autopilotRouter);
   app.use('/api/billing', billingRouter);
+  app.use('/api/website-audit', websiteRouter);
+  app.use('/api/performance', performanceRouter);
+  app.use('/api/prominence', prominenceRouter);
   app.use('/api/admin', adminRouter);
 
   app.use(notFoundHandler);

@@ -130,7 +130,7 @@ export function listAccounts(account) {
 
 const LOCATION_READ_MASK = [
   'name', 'title', 'phoneNumbers', 'categories', 'storefrontAddress', 'websiteUri',
-  'regularHours', 'specialHours', 'profile', 'metadata', 'serviceItems',
+  'regularHours', 'specialHours', 'profile', 'metadata', 'serviceItems', 'latlng', 'serviceArea', 'openInfo',
 ].join(',');
 
 export function listLocations(account, accountName) {
@@ -146,6 +146,44 @@ export function updateLocation(account, locationName, patch, updateMask) {
     method: 'PATCH',
     body: patch,
   });
+}
+
+export function listCategories(account, regionCode, query) {
+  const params = new URLSearchParams({ regionCode, languageCode: 'en', view: 'BASIC', pageSize: '100', filter: `displayName=${query}` });
+  return call(account, `${INFO_API}/categories?${params}`);
+}
+
+export function getAttributes(account) {
+  return call(account, `${INFO_API}/${account.locationName}/attributes`);
+}
+
+export function getVerification(account) {
+  return call(account, `https://mybusinessverifications.googleapis.com/v1/${account.locationName}/VoiceOfMerchantState`);
+}
+
+export function searchKeywordMonth(date = new Date()) {
+  const month = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - 1, 1));
+  return { year: month.getUTCFullYear(), month: month.getUTCMonth() + 1 };
+}
+
+export function getSearchKeywords(account, month = searchKeywordMonth()) {
+  const params = new URLSearchParams({
+    'monthlyRange.start_month.year': String(month.year), 'monthlyRange.start_month.month': String(month.month),
+    'monthlyRange.end_month.year': String(month.year), 'monthlyRange.end_month.month': String(month.month), pageSize: '100',
+  });
+  return allPages(account, `https://businessprofileperformance.googleapis.com/v1/${account.locationName}/searchkeywords/impressions/monthly?${params}`, 'searchKeywordsCounts');
+}
+
+export function getDailyPerformance(account, metrics, start, end) {
+  const params = new URLSearchParams();
+  metrics.forEach((metric) => params.append('dailyMetrics', metric));
+  for (const [part, value] of [['start_date', start], ['end_date', end]]) {
+    const [year, month, day] = value.split('-');
+    params.set(`dailyRange.${part}.year`, String(Number(year)));
+    params.set(`dailyRange.${part}.month`, String(Number(month)));
+    params.set(`dailyRange.${part}.day`, String(Number(day)));
+  }
+  return call(account, `https://businessprofileperformance.googleapis.com/v1/${account.locationName}:fetchMultiDailyMetricsTimeSeries?${params}`);
 }
 
 // ---- Reviews (v4) ---------------------------------------------------------
@@ -180,6 +218,10 @@ export function deleteReply(account, reviewId) {
 
 export function listMedia(account) {
   return call(account, `${v4Location(account)}/media?pageSize=100`);
+}
+
+export function listAllMedia(account) {
+  return allPages(account, `${v4Location(account)}/media?pageSize=100`, 'mediaItems');
 }
 
 /** Google fetches the photo from sourceUrl, so it must be a public https URL. */

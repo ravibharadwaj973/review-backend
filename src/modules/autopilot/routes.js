@@ -14,7 +14,7 @@ import { addDaysYmd, localYmd, safeTz, weekStartYmd, zonedDate } from '../../uti
 export const autopilotRouter = Router();
 autopilotRouter.use(requireAuth, requireBusiness);
 
-const rule = z.enum(['auto', 'approve']);
+const rule = z.literal('approve');
 const settingsSchema = z.object({
   replyRules: z.object({ five: rule, four: rule, three: rule, low: rule }).partial().optional(),
   replyDelayMinutes: z.number().int().min(0).max(1440).optional(),
@@ -35,7 +35,7 @@ const plain = (v) => (v?.toObject ? v.toObject() : v || {});
 function settingsOf(b) {
   const a = plain(b.automation);
   return {
-    replyRules: { five: 'auto', four: 'auto', three: 'approve', low: 'approve', ...plain(a.replyRules) },
+    replyRules: { five: 'approve', four: 'approve', three: 'approve', low: 'approve' },
     replyDelayMinutes: a.replyDelayMinutes ?? 30,
     autoDraftReplies: a.autoDraftReplies !== false,
     syncHoursToGoogle: a.syncHoursToGoogle !== false,
@@ -47,6 +47,7 @@ function settingsOf(b) {
 /** Everything the Autopilot page shows: settings, counts and the next 7 days. */
 autopilotRouter.get('/', ah(async (req, res) => {
   const b = req.business;
+  await publishDueReplies({ businessId: b._id });
   const tz = safeTz(b.timezone);
   const now = new Date();
   const weekStart = weekStartYmd(now, tz);

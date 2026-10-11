@@ -2,7 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireBusiness } from '../../middleware/auth.js';
 import { ah, parse, badRequest } from '../../utils/http.js';
-import { Location, Business } from '../../models/index.js';
+import { Location, Business, Service, Review } from '../../models/index.js';
+import { profileAudit } from './audit.js';
+import { locationAudit } from './location-audit.js';
+import { realReviewFilter } from '../reviews/policy.js';
 import { env } from '../../config/env.js';
 import { conflict } from '../../utils/http.js';
 import { GoogleAccount } from '../../models/index.js';
@@ -29,6 +32,10 @@ const businessSchema = z
   .object({
     name: z.string().trim().min(2).max(120),
     category: z.string().trim().max(60),
+    googleCategories: z.object({
+      primary: z.object({ name: z.string().regex(/^categories\/gcid:[a-z0-9_]+$/), displayName: z.string().trim().min(1).max(140) }),
+      additional: z.array(z.object({ name: z.string().regex(/^categories\/gcid:[a-z0-9_]+$/), displayName: z.string().trim().min(1).max(140) })).max(9),
+    }).refine((c) => new Set([c.primary.name, ...c.additional.map((a) => a.name)]).size === c.additional.length + 1, 'Choose each category only once'),
     description: z.string().max(750, 'Google allows up to 750 characters'),
     phone: z.string().trim().max(30),
     email: z.union([z.literal(''), z.string().trim().email()]),
@@ -49,6 +56,11 @@ const businessSchema = z
     }).refine((x) => x.start <= x.end, { message: 'The season must end after it starts', path: ['end'] })).max(6),
     specialHours: z.array(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), open: time.optional().or(z.literal('')), close: time.optional().or(z.literal('')), closed: z.boolean(), note: z.string().max(120).optional() })).max(60),
     serviceAreas: z.array(z.string().trim().max(80)).max(20),
+    locationSettings: z.object({
+      type: z.enum(['unknown', 'storefront', 'service_area', 'hybrid']),
+      pin: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }).nullable().optional(),
+      receivesCustomers: z.boolean(), visitsCustomers: z.boolean(), permanentSignage: z.boolean(), staffedDuringHours: z.boolean(), virtualOffice: z.boolean(),
+    }),
     links: z.object({
       website: url.optional(), booking: url.optional(), appointment: url.optional(), ordering: url.optional(),
       whatsapp: url.optional(), instagram: url.optional(), facebook: url.optional(), youtube: url.optional(),
@@ -79,10 +91,25 @@ businessRouter.get('/', ah(async (req, res) => {
   res.json({ business: req.business, locations });
 }));
 
+businessRouter.get('/audit', ah(async (req, res) => {
+  const [account, services, reviews] = await Promise.all([
+    GoogleAccount.findOne({ business: req.business._id }).lean(),
+    Service.find({ business: req.business._id, active: true }).lean(),
+    Review.find({ ...realReviewFilter, business: req.business._id }).select('rating reply analysis.services analysis.negatives analysis.concerns').lean(),
+  ]);
+  res.json(profileAudit(req.business, { account, services, reviews }));
+}));
+
+businessRouter.get('/location-audit', ah(async (req, res) => {
+  const account = await GoogleAccount.findOne({ business: req.business._id }).lean();
+  res.json(locationAudit(req.business, account));
+}));
+
 businessRouter.patch(
   '/',
   ah(async (req, res) => {
     const body = parse(businessSchema, req.body);
+    if (body.locationSettings) body.locationSettings.confirmedAt = new Date();
     const b = req.business;
     // The review link is never removed once set — it can only be replaced by another link
     if ('reviewLink' in body && !body.reviewLink) {

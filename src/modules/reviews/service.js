@@ -1,4 +1,4 @@
-import { Review, AiResponse, Service, Customer, ReviewRequest, Question, Business } from '../../models/index.js';
+import { Review, AiResponse, Service, Customer, ReviewRequest, Question } from '../../models/index.js';
 import { analyzeReview, generateReply } from '../ai/service.js';
 import * as google from '../google/client.js';
 import { requireReplyConnection, realReviewFilter } from './policy.js';
@@ -103,6 +103,7 @@ export async function publishReply({ review, business, user, text, aiResponseId 
   const comment = String(text || '').trim();
   if (!comment) throw new HttpError(400, 'Write a reply before publishing');
   if (comment.length > 4096) throw new HttpError(400, 'Replies must be under 4,096 characters');
+  if (!user?._id) throw new HttpError(409, 'Business approval is required before publishing a reply');
 
   const account = await requireReplyConnection(business._id, review);
   // Direct (in-app) reviews have no Google counterpart: the reply is stored in ReviewRankr only
@@ -180,35 +181,19 @@ export async function attributeReview(review, business) {
   return match;
 }
 
-/**
- * Which reply rule applies to a review: 'auto' (AI posts after a short delay) or 'approve'.
- * Reviews that look urgent, or whose words don't match the stars, always wait for a person.
- */
-export function replyRuleFor(business, review) {
-  const rules = business.automation?.replyRules || {};
-  const key = review.rating >= 5 ? 'five' : review.rating === 4 ? 'four' : review.rating === 3 ? 'three' : 'low';
-  const fallback = { five: 'auto', four: 'auto', three: 'approve', low: 'approve' }[key];
-  const rule = rules[key] || fallback;
-  if (rule !== 'auto') return { rule: 'approve', reason: 'Your rule: approve first' };
-  const a = review.analysis || {};
-  if (a.urgency === 'high') return { rule: 'approve', reason: 'Looks urgent — held for you' };
-  if (review.rating >= 4 && ['negative', 'mixed'].includes(a.sentiment)) return { rule: 'approve', reason: 'Stars and words don’t match — held for you' };
-  if ((a.concerns || []).length && review.rating >= 4) return { rule: 'approve', reason: 'Mentions a problem — held for you' };
-  return { rule: 'auto', reason: 'Posts automatically' };
+/** Every draft requires explicit business approval, including legacy automatic rules. */
+export function replyRuleFor() {
+  return { rule: 'approve', reason: 'Business approval required' };
 }
 
-/** Marks a draft to be posted automatically if the business's rules allow it. */
-export async function applyReplyRule(draft, review, business, { extraDelayMinutes = 0 } = {}) {
-  if (business.automation?.autoDraftReplies === false) return { rule: 'approve' };
+/** Keeps new and existing drafts in the approval queue. */
+export async function applyReplyRule(draft, review, business) {
   await requireReplyConnection(business._id, review);
-  if (!draft.model?.startsWith('groq:')) return { rule: 'approve' };
-  const decision = replyRuleFor(business, review);
-  if (decision.rule === 'auto') {
-    const delay = Number(business.automation?.replyDelayMinutes ?? 30) + extraDelayMinutes;
-    draft.autoPublishAt = new Date(Date.now() + delay * 60_000);
+  if (draft.autoPublishAt) {
+    draft.autoPublishAt = undefined;
     await draft.save();
   }
-  return decision;
+  return replyRuleFor();
 }
 
 /** Full pipeline for freshly detected reviews: analyse → attribute → draft → (auto-post per reply rules). */
@@ -255,28 +240,9 @@ export async function draftBacklog(business, { limit = 30 } = {}) {
   return { reviews: reviews.length, drafted, scheduled };
 }
 
-/** Publishes AI replies whose automatic posting time has come. Used by the worker. */
-export async function publishDueReplies({ limit = 25, businessId } = {}) {
-  const due = await AiResponse.find({ status: 'draft', autoPublishAt: { $lte: new Date() }, ...(businessId ? { business: businessId } : {}) }).sort({ autoPublishAt: 1 }).limit(limit);
-  let published = 0;
-  for (const draft of due) {
-    const [review, business] = await Promise.all([Review.findById(draft.review), Business.findById(draft.business)]);
-    if (business?.account?.status === 'suspended') continue; // waits until the account is active again
-    if (!review || !business || review.status === 'answered') {
-      draft.status = 'discarded';
-      draft.autoPublishAt = undefined;
-      await draft.save();
-      continue;
-    }
-    try {
-      await requireReplyConnection(business._id, review);
-      if (!draft.model?.startsWith('groq:')) throw new HttpError(409, 'Automatic replies require a Groq-generated draft');
-      await publishReply({ review, business, text: draft.finalText || draft.text, aiResponseId: draft._id });
-      published += 1;
-    } catch (err) {
-      await AiResponse.updateOne({ _id: draft._id }, { $unset: { autoPublishAt: 1 }, status: 'failed', error: err.message });
-      console.warn(`[autopilot] auto reply failed for ${review._id}: ${err.message}`);
-    }
-  }
-  return published;
+/** Retires legacy automatic schedules. Replies now require business approval. */
+export async function publishDueReplies({ businessId } = {}) {
+  // Legacy schedules return to the approval inbox; the worker cannot approve for an owner.
+  await AiResponse.updateMany({ status: 'draft', autoPublishAt: { $exists: true }, ...(businessId ? { business: businessId } : {}) }, { $unset: { autoPublishAt: 1 } });
+  return 0;
 }

@@ -19,7 +19,7 @@ export function errorHandler(err, req, res, _next) {
     return res.status(400).json({ error: `Invalid ${err.path}` });
   }
   if (err instanceof multer.MulterError) {
-    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File is larger than 8 MB' : err.message });
+    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the upload size limit' : err.message });
   }
   const status = err?.status || err?.statusCode;
   if (status && status >= 400 && status < 500) {

@@ -8,6 +8,7 @@ import { GoogleAccount, Location, Service, Photo, Review, Business, User } from 
 import * as google from './client.js';
 import { usableReviewLink } from '../../utils/review-link.js';
 import * as sync from './sync.js';
+import { isLiveConnection } from '../reviews/policy.js';
 
 
 
@@ -158,6 +159,10 @@ async function listAllLocations(account) {
         newReviewUri: l.metadata?.newReviewUri,
         mapsUri: l.metadata?.mapsUri,
         primaryCategory: l.categories?.primaryCategory?.name,
+        latlng: l.latlng || null,
+        serviceArea: l.serviceArea || null,
+        hours: google.hoursFromGoogle(l.regularHours),
+        openStatus: l.openInfo?.status || null,
         verified: l.metadata?.hasVoiceOfMerchant,
         raw: l,
       });
@@ -195,6 +200,9 @@ async function selectLocation(business, account, loc) {
 
   // Fill empty profile fields from Google (never overwrite what the owner typed)
   const raw = loc.raw || {};
+  if (!business.googleCategories?.primary?.name && raw.categories?.primaryCategory) {
+    business.googleCategories = { primary: raw.categories.primaryCategory, additional: raw.categories.additionalCategories || [] };
+  }
   if (!business.phone && raw.phoneNumbers?.primaryPhone) business.phone = raw.phoneNumbers.primaryPhone;
   if (!business.links?.website && raw.websiteUri) business.links.website = raw.websiteUri;
   if (!business.description && raw.profile?.description) business.description = raw.profile.description.slice(0, 750);
@@ -250,6 +258,17 @@ googleRouter.get(
   })
 );
 
+googleRouter.post('/locations/audit-refresh', ah(async (req, res) => {
+  const account = await sync.loadAccount(req.business._id);
+  if (!isLiveConnection(account)) throw new HttpError(409, 'Connect a live Google Business Profile first');
+  const all = await listAllLocations(account);
+  account.locationInventory = all.map(({ raw, ...location }) => location);
+  account.locationsFetchedAt = new Date();
+  await account.save();
+  await sync.refreshRemoteSnapshot(req.business);
+  res.json({ ok: true });
+}));
+
 googleRouter.post(
   '/locations/select',
   ah(async (req, res) => {
@@ -289,10 +308,17 @@ googleRouter.post(
 
 googleRouter.get('/sync-status', ah(async (req, res) => res.json(await sync.syncStatus(req.business))));
 
+googleRouter.get('/categories', ah(async (req, res) => {
+  const { q } = parse(z.object({ q: z.string().trim().min(2).max(80).regex(/^[\p{L}\p{N} &'-]+$/u) }), req.query);
+  const account = await sync.loadAccount(req.business._id);
+  if (!isLiveConnection(account)) throw new HttpError(409, 'Connect a live Google Business Profile first');
+  res.json(await google.listCategories(account, req.business.address?.country || 'IN', q));
+}));
+
 googleRouter.post(
   '/push/profile',
   ah(async (req, res) => {
-    const body = parse(z.object({ sections: z.array(z.enum(['name', 'phone', 'website', 'description', 'hours', 'specialHours'])).min(1) }), req.body);
+    const body = parse(z.object({ sections: z.array(z.enum(['name', 'phone', 'website', 'description', 'hours', 'specialHours', 'categories'])).min(1) }), req.body);
     const results = await sync.pushProfile(req.business, body.sections);
     res.json({ results, status: await sync.syncStatus(req.business) });
   })

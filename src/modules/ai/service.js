@@ -293,23 +293,24 @@ Only include services that actually appear in the text. Prices in INR as plain n
     return { services: cleanServices(data.services, existing), model, source };
   }
 
-  const fallback = () => ({ services: cleanServices(catalogFor(business.category), existing), model: 'catalog', source });
+  const candidates = (items) => cleanServices(items, existing).map((s) => ({ ...s, price: null, duration: null }));
+  const fallback = () => ({ services: candidates(catalogFor(business.category)), model: 'catalog', source });
   try {
     const { data, model } = await chatJSON({
       temperature: 0.3,
       maxTokens: 2500,
       system: `You help a local business in India list every service it offers.
-Return JSON {"services":[{"name":"...","category":"group","price":typical starting price in INR as a number or null,"duration":typical minutes or null,"description":"one short, simple sentence"}]}.
+Return JSON {"services":[{"name":"...","category":"group","price":null,"duration":null,"description":"one short, simple sentence"}]}.
 Give a complete, realistic list for this type of business: 20 to 40 services, grouped into sensible categories.
 Use the names customers actually say (e.g. "Haircut", "Hair spa", "Root canal", "Monthly membership").
-Prices should be typical for the city if given. Descriptions in plain simple English.`,
+These are candidates for the owner to confirm, not claims about their business. Never invent prices or durations. Descriptions in plain simple English.`,
       user: `Business: ${business.name}
 Type: ${business.category}
 ${business.address?.city ? `City: ${business.address.city}` : ''}
 ${business.description ? `About: ${business.description}` : ''}
 Already listed (do not repeat): ${existing.map((e) => e.name).join(', ') || 'none'}`,
     });
-    const services = cleanServices(data.services, existing);
+    const services = candidates(data.services);
     if (!services.length) return fallback();
     return { services, model, source };
   } catch (err) {

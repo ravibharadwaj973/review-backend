@@ -2,15 +2,18 @@ import { Photo, GoogleAccount } from '../../models/index.js';
 import { pushPhoto } from '../google/sync.js';
 import { addDaysYmd, safeTz, weekStartYmd, zonedDate } from '../../utils/time.js';
 import { photoSlots } from '../autopilot/slots.js';
+import { approvedMedia, supportedPhoto } from './audit.js';
+import { isLiveConnection } from '../reviews/policy.js';
 
 const NOT_QUEUED = ['logo', 'cover'];
 
-export const canQueue = (photo) => !NOT_QUEUED.includes(photo.category);
+export const canQueue = (photo) => supportedPhoto(photo) && !NOT_QUEUED.includes(photo.category);
 
 /** Photos posted in the week starting weekStart. */
 export async function postedInWeek(businessId, weekStart, tz) {
   return Photo.countDocuments({
     business: businessId,
+    'google.syncStatus': 'synced',
     postedAt: { $gte: zonedDate(weekStart, '00:00', tz), $lt: zonedDate(addDaysYmd(weekStart, 7), '00:00', tz) },
   });
 }
@@ -22,7 +25,8 @@ export async function postedInWeek(businessId, weekStart, tz) {
 export async function planPhotos(business, now = new Date()) {
   const cfg = business.autopilot?.photos || {};
   const tz = safeTz(business.timezone);
-  const queued = await Photo.find({ business: business._id, queued: true }).sort({ queuePosition: 1, createdAt: 1 });
+  await Photo.updateMany({ business: business._id, queued: true, $or: [{ 'approval.status': { $ne: 'approved' } }, { mediaType: 'video' }] }, { queued: false, $unset: { scheduledFor: 1 } });
+  const queued = await Photo.find({ business: business._id, queued: true, 'approval.status': 'approved', mediaType: { $ne: 'video' } }).sort({ queuePosition: 1, createdAt: 1 });
   const perWeek = cfg.enabled === false ? 0 : Number(cfg.perWeek ?? 4);
 
   const slots = [];
@@ -47,8 +51,9 @@ export async function planPhotos(business, now = new Date()) {
 
 /** Posts one photo to Google now and takes it out of the queue. */
 export async function postPhotoNow(business, photo) {
+  if (!approvedMedia(photo) || !supportedPhoto(photo)) throw Object.assign(new Error('Only approved photos can be published through this API'), { status: 409 });
   await pushPhoto(business, photo);
-  const ok = ['synced', 'demo'].includes(photo.google?.syncStatus);
+  const ok = photo.google?.syncStatus === 'synced';
   photo.queued = false;
   photo.scheduledFor = undefined;
   if (ok) photo.postedAt = new Date();
@@ -59,8 +64,8 @@ export async function postPhotoNow(business, photo) {
 /** Posts queued photos whose time has come (a couple per run). Needs a Google connection. */
 export async function postDuePhotos(business, now = new Date()) {
   const account = await GoogleAccount.findOne({ business: business._id }).select('mode status locationName').lean();
-  if (!account || (account.mode === 'live' && !account.locationName)) return 0;
-  const due = await Photo.find({ business: business._id, queued: true, scheduledFor: { $lte: now } }).sort({ scheduledFor: 1 }).limit(2);
+  if (!isLiveConnection(account)) return 0;
+  const due = await Photo.find({ business: business._id, queued: true, 'approval.status': 'approved', mediaType: { $ne: 'video' }, scheduledFor: { $lte: now } }).sort({ scheduledFor: 1 }).limit(2);
   for (const photo of due) await postPhotoNow(business, photo);
   return due.length;
 }

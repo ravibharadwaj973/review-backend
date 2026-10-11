@@ -30,6 +30,10 @@ const businessSchema = new mongoose.Schema(
     owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     name: { type: String, required: true, trim: true },
     category: { type: String, default: 'Salon', trim: true },
+    googleCategories: {
+      primary: { name: String, displayName: String },
+      additional: [{ name: String, displayName: String, _id: false }],
+    },
     description: { type: String, default: '', maxlength: 750 }, // Google limit is 750 chars
     phone: { type: String, default: '' },
     email: { type: String, default: '' },
@@ -47,6 +51,16 @@ const businessSchema = new mongoose.Schema(
     },
     specialHours: [specialHoursSchema],
     serviceAreas: [String],
+    locationSettings: {
+      type: { type: String, enum: ['unknown', 'storefront', 'service_area', 'hybrid'], default: 'unknown' },
+      pin: { latitude: Number, longitude: Number },
+      receivesCustomers: Boolean,
+      visitsCustomers: Boolean,
+      permanentSignage: Boolean,
+      staffedDuringHours: Boolean,
+      virtualOffice: Boolean,
+      confirmedAt: Date,
+    },
     links: {
       website: { type: String, default: '' },
       booking: { type: String, default: '' },
@@ -82,8 +96,8 @@ const businessSchema = new mongoose.Schema(
       //   auto    — AI posts it by itself after replyDelayMinutes (you can still edit or hold it)
       //   approve — AI drafts it and waits for you
       replyRules: {
-        five: { type: String, enum: ['auto', 'approve'], default: 'auto' },
-        four: { type: String, enum: ['auto', 'approve'], default: 'auto' },
+        five: { type: String, enum: ['auto', 'approve'], default: 'approve' },
+        four: { type: String, enum: ['auto', 'approve'], default: 'approve' },
         three: { type: String, enum: ['auto', 'approve'], default: 'approve' },
         low: { type: String, enum: ['auto', 'approve'], default: 'approve' }, // 1–2 stars
       },

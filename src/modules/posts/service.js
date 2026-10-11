@@ -8,6 +8,8 @@ import { env } from '../../config/env.js';
 import { addDaysYmd, safeTz, weekStartYmd, ymdToParts, localYmd } from '../../utils/time.js';
 import { postSlots } from '../autopilot/slots.js';
 import { HttpError } from '../../utils/http.js';
+import { approvedMedia, supportedPhoto } from '../photos/audit.js';
+import { isLiveConnection, realReviewFilter } from '../reviews/policy.js';
 
 /** Which button a post gets, from the links the business has filled in. */
 export function defaultAction(business) {
@@ -49,6 +51,11 @@ export function validatePost(post) {
   if (looksLikePhone) return 'Google rejects posts with phone numbers in the text — use the Call button instead';
   if (post.action && !['NONE', 'CALL'].includes(post.action) && !/^https?:\/\//.test(post.actionUrl || '')) return 'Add the link for the button';
   if ((post.type === 'EVENT' || post.type === 'OFFER') && (!post.title?.trim() || !post.startDate)) return `${post.type === 'OFFER' ? 'Offers' : 'Events'} need a title and a start date`;
+  if (post.type === 'EVENT' || post.type === 'OFFER') {
+    const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '') && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+    if (!validDate(post.startDate) || post.endDate && !validDate(post.endDate)) return 'Use valid event or offer dates';
+    if (post.endDate && post.endDate < post.startDate) return 'The end date must be on or after the start date';
+  }
   return null;
 }
 
@@ -57,14 +64,10 @@ export async function publishPost(post, business) {
   const problem = validatePost(post);
   if (problem) throw new HttpError(400, problem);
   const account = await loadAccount(business._id);
-  if (!account) throw new HttpError(409, 'Connect your Google Business Profile to publish posts');
+  if (!isLiveConnection(account)) throw new HttpError(409, 'Connect a live Google Business Profile to publish posts');
   const photo = post.photo ? await Photo.findById(post.photo) : null;
 
-  if (account.mode === 'demo') {
-    Object.assign(post, { status: 'published', publishedAt: new Date(), publishedTo: 'demo', error: undefined });
-    await post.save();
-    return post;
-  }
+  if (post.photo && (!photo || String(photo.business) !== String(business._id) || !approvedMedia(photo) || !supportedPhoto(photo))) throw new HttpError(409, 'Choose an approved photo from your business library');
   if (!account.locationName) throw new HttpError(409, 'Choose your Google location first');
   if (photo && !/^https:\/\//.test(env.publicAssetUrl)) throw new HttpError(400, 'Photos need a public https address. Set PUBLIC_ASSET_URL.');
   try {
@@ -105,13 +108,13 @@ async function pickPhoto(businessId, theme) {
   const recent = await Post.find({ business: businessId, photo: { $exists: true }, createdAt: { $gte: since } }).select('photo').lean();
   const used = recent.map((p) => p.photo);
   const prefer = PHOTO_FOR_THEME[theme] || [];
-  const base = { business: businessId, _id: { $nin: used }, category: { $nin: ['logo'] } };
+  const base = { business: businessId, _id: { $nin: used }, category: { $nin: ['logo'] }, 'approval.status': 'approved', mediaType: { $ne: 'video' } };
   return (await Photo.findOne({ ...base, category: { $in: prefer } }).sort({ createdAt: -1 }))
     || (await Photo.findOne(base).sort({ createdAt: -1 }));
 }
 
 async function praisedThemes(businessId) {
-  const rows = await Review.find({ business: businessId, rating: { $gte: 4 }, 'analysis.positives.0': { $exists: true } }).sort({ createTime: -1 }).limit(40).select('analysis.positives').lean();
+  const rows = await Review.find({ ...realReviewFilter, business: businessId, rating: { $gte: 4 }, 'analysis.positives.0': { $exists: true } }).sort({ createTime: -1 }).limit(40).select('analysis.positives').lean();
   const counts = {};
   for (const r of rows) for (const p of r.analysis.positives || []) counts[p] = (counts[p] || 0) + 1;
   return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k]) => k).slice(0, 3);
@@ -200,8 +203,8 @@ export async function planPosts(business, now = new Date()) {
 
 /** Publishes scheduled posts whose time has come. */
 export async function publishDuePosts(business, now = new Date()) {
-  const account = await GoogleAccount.findOne({ business: business._id }).select('mode locationName').lean();
-  if (!account || (account.mode === 'live' && !account.locationName)) return 0;
+  const account = await GoogleAccount.findOne({ business: business._id }).select('mode status locationName').lean();
+  if (!isLiveConnection(account)) return 0;
   const due = await Post.find({ business: business._id, status: 'scheduled', scheduledFor: { $lte: now } }).sort({ scheduledFor: 1 }).limit(3);
   for (const post of due) {
     try {

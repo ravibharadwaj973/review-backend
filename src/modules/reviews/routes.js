@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth, requireBusiness } from '../../middleware/auth.js';
 import { ah, parse, notFound, paginate, badRequest } from '../../utils/http.js';
 import { Review, AiResponse, GoogleAccount, Service, GeneratedReview } from '../../models/index.js';
-import { analyzeAndStore, draftReply, publishReply } from './service.js';
+import { analyzeAndStore, draftReply, publishReply, publishDueReplies } from './service.js';
 import { realReviewFilter, isLiveConnection, requireReplyConnection } from './policy.js';
 import * as google from '../google/client.js';
 
@@ -36,6 +36,7 @@ function buildFilter(businessId, q) {
 }
 
 reviewsRouter.get('/', ah(async (req, res) => {
+  await publishDueReplies({ businessId: req.business._id });
   const { page, limit, skip } = paginate(req.query, { defaultLimit: 20 });
   const filter = buildFilter(req.business._id, req.query);
   const sort = req.query.sort === 'oldest' ? { createTime: 1 } : req.query.sort === 'lowest' ? { rating: 1, createTime: -1 } : req.query.sort === 'highest' ? { rating: -1, createTime: -1 } : { createTime: -1 };

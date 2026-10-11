@@ -6,6 +6,8 @@ import { Post, POST_TYPES, POST_ACTIONS, POST_THEMES, Photo, Service, GoogleAcco
 import { answeredFaqs } from '../reviews/service.js';
 import { generatePost } from '../ai/service.js';
 import { defaultAction, planPosts, publishPost, removeFromGoogle, validatePost } from './service.js';
+import { approvedMedia, supportedPhoto } from '../photos/audit.js';
+import { isLiveConnection } from '../reviews/policy.js';
 
 export const postsRouter = Router();
 postsRouter.use(requireAuth, requireBusiness);
@@ -34,22 +36,22 @@ async function owned(req) {
 
 async function checkPhoto(req, id) {
   if (!id) return null;
-  const ok = await Photo.exists({ _id: id, business: req.business._id });
-  if (!ok) throw badRequest('Choose one of your photos');
+  const photo = await Photo.findOne({ _id: id, business: req.business._id }).lean();
+  if (!photo || !approvedMedia(photo) || !supportedPhoto(photo)) throw badRequest('Choose an approved photo from your media library');
   return id;
 }
 
 postsRouter.get('/', ah(async (req, res) => {
-  const filter = { business: req.business._id, status: { $ne: 'discarded' } };
+  const filter = { business: req.business._id, status: { $ne: 'discarded' }, publishedTo: { $ne: 'demo' } };
   if (req.query.status === 'upcoming') filter.status = { $in: ['draft', 'scheduled', 'failed'] };
   if (req.query.status === 'published') filter.status = 'published';
   const [posts, account] = await Promise.all([
     Post.find(filter).sort({ status: 1, scheduledFor: 1, publishedAt: -1, createdAt: -1 }).limit(100).populate('photo', 'fileUrl caption category').lean(),
-    GoogleAccount.findOne({ business: req.business._id }).select('mode locationName').lean(),
+    GoogleAccount.findOne({ business: req.business._id }).select('mode status locationName').lean(),
   ]);
   const order = { failed: 0, draft: 1, scheduled: 2, published: 3 };
   posts.sort((a, b) => (order[a.status] - order[b.status]) || (a.status === 'published' ? new Date(b.publishedAt) - new Date(a.publishedAt) : new Date(a.scheduledFor || a.createdAt) - new Date(b.scheduledFor || b.createdAt)));
-  res.json({ posts, connection: account ? account.mode : null, defaults: defaultAction(req.business), settings: req.business.autopilot?.posts });
+  res.json({ posts, connection: isLiveConnection(account) ? 'live' : null, defaults: defaultAction(req.business), settings: req.business.autopilot?.posts });
 }));
 
 /** AI writes post text (not saved) */
