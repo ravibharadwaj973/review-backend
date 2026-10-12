@@ -25,6 +25,7 @@ import { billingRouter } from './modules/billing/routes.js';
 import { websiteRouter } from './modules/website/routes.js';
 import { performanceRouter } from './modules/performance/routes.js';
 import { prominenceRouter } from './modules/prominence/routes.js';
+import { mapVisibilityRouter } from './modules/map-visibility/routes.js';
 
 export function createApp() {
   const app = express();
@@ -80,6 +81,7 @@ export function createApp() {
   app.use('/api/website-audit', websiteRouter);
   app.use('/api/performance', performanceRouter);
   app.use('/api/prominence', prominenceRouter);
+  app.use('/api/map-visibility', mapVisibilityRouter);
   app.use('/api/admin', adminRouter);
 
   app.use(notFoundHandler);

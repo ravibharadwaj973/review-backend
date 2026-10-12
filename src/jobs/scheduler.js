@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { env } from '../config/env.js';
 import { syncAllBusinesses } from '../modules/google/sync.js';
 import { runAutopilotAll } from '../modules/autopilot/runner.js';
+import { runMapScans } from '../modules/map-visibility/runner.js';
 
 let running = false;
 
@@ -31,6 +32,8 @@ export async function runAutopilot() {
 
 export function startScheduler() {
   const tasks = [];
+  tasks.push(cron.schedule('* * * * *', runMapScans));
+  setTimeout(runMapScans, 5000);
   if (cron.validate(env.worker.reviewSyncCron)) {
     tasks.push(cron.schedule(env.worker.reviewSyncCron, runReviewSync));
     console.log(`[worker] review monitoring scheduled (${env.worker.reviewSyncCron})`);

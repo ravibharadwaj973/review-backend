@@ -9,6 +9,8 @@ export { GeneratedReview } from './GeneratedReview.js';
 export { WebsiteAudit } from './WebsiteAudit.js';
 export { PerformanceSnapshot, CompletedActivity } from './Performance.js';
 export { ExternalSource } from './ExternalSource.js';
+export { MapTracking, MapScan } from './MapVisibility.js';
+export { GeocodeCache } from './GeocodeCache.js';
 export { AiResponse } from './AiResponse.js';
 export { ReviewRequest } from './ReviewRequest.js';
 export { Photo, PHOTO_CATEGORIES, GOOGLE_MEDIA_CATEGORY } from './Photo.js';

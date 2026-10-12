@@ -87,6 +87,11 @@ export const env = {
     redirectUri: process.env.GOOGLE_REDIRECT_URI || `${publicFrontend}/api/google/oauth/callback`,
   },
 
+  mapVisibility: {
+    apiKey: process.env.SERPAPI_API_KEY || '',
+    geocodingKey: process.env.GOOGLE_MAPS_BACKEND_API_KEY || '',
+  },
+
   worker: {
     inProcess: (process.env.RUN_WORKER ?? 'true') !== 'false',
     reviewSyncCron: process.env.REVIEW_SYNC_CRON || '*/15 * * * *',
