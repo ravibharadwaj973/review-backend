@@ -97,7 +97,7 @@ mapVisibilityRouter.post('/scans', rateLimit({ windowMs: 3600000, limit: 6, keyG
   const configuration = { keyword: body.keyword, radiusKm: body.radiusKm, gridSize: body.gridSize, rankingRange: body.rankingRange, language: settings.language, center: location.center, placeId: settings.placeId, provider: 'serpapi', geoDataExpiresAt: location.expiresAt || undefined };
   await MapScan.init();
   let scan;
-  try { scan = await MapScan.create({ ...configuration, business: req.business._id, businessName: req.business.name, signature: signature(configuration), points: generateGrid(settings.center, body.radiusKm, body.gridSize) }); } catch (err) {
+  try { scan = await MapScan.create({ ...configuration, business: req.business._id, businessName: req.business.name, signature: signature(configuration), points: generateGrid(location.center, body.radiusKm, body.gridSize) }); } catch (err) {
     if (err.code === 11000) throw conflict('A scan is already queued or running for this business.');
     throw err;
   }

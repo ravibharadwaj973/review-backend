@@ -149,6 +149,41 @@ test('missing provider key blocks scan creation before database writes', async (
   } finally { env.mapVisibility.apiKey = original; }
 });
 
+test('scan creation generates its grid from the resolved location and rejects expired Google coordinates', async () => {
+  const { mapVisibilityRouter } = await import('../src/modules/map-visibility/routes.js');
+  const { MapTracking, MapScan, GeocodeCache } = await import('../src/models/index.js');
+  const originals = { settings: MapTracking.findOne, cache: GeocodeCache.findOne, init: MapScan.init, create: MapScan.create, key: env.mapVisibility.apiKey };
+  const expiry = new Date(Date.now() + 86400000);
+  const stop = new Error('Stop before queue execution');
+  let captured;
+  const handler = mapVisibilityRouter.stack.find(layer => layer.route?.path === '/scans' && layer.route.methods.post).route.stack.at(-1).handle;
+  try {
+    env.mapVisibility.apiKey = 'fixture-only';
+    MapScan.init = async () => {};
+    MapScan.create = async value => { captured = value; throw stop; };
+    for (const source of ['owner', 'google', 'expired']) {
+      captured = undefined;
+      MapTracking.findOne = () => ({ lean: async () => ({ business: 'owned', placeId: configuration.placeId, keywords: [configuration.keyword], language: 'en', coordinateSource: source === 'owner' ? 'owner' : 'google', ...(source === 'owner' ? { center: configuration.center } : {}) }) });
+      GeocodeCache.findOne = () => ({ lean: async () => source === 'expired' ? null : { results: [{ placeId: configuration.placeId, ...configuration.center }], expiresAt: expiry } });
+      let error;
+      await handler({ body: { keyword: configuration.keyword, radiusKm: 5, gridSize: 5, rankingRange: 20, approved: true }, business: { _id: 'owned', name: 'QA Salon' } }, {}, err => { error = err; });
+      if (source === 'expired') {
+        assert.equal(error.status, 400);
+        assert.equal(captured, undefined);
+      } else {
+        assert.equal(error, stop);
+        assert.deepEqual(captured.center, configuration.center);
+        assert.deepEqual(captured.points, generateGrid(configuration.center, 5, 5));
+        assert.equal(captured.points.length, 25);
+        assert.equal(captured.geoDataExpiresAt, source === 'google' ? expiry : undefined);
+      }
+    }
+  } finally {
+    MapTracking.findOne = originals.settings; GeocodeCache.findOne = originals.cache;
+    MapScan.init = originals.init; MapScan.create = originals.create; env.mapVisibility.apiKey = originals.key;
+  }
+});
+
 test('persistent runner records success and stops immediately on provider failure without auto retry', async () => {
   const { runMapScans } = await import('../src/modules/map-visibility/runner.js');
   const { MapScan, Business } = await import('../src/models/index.js');
